@@ -1,0 +1,115 @@
+/**
+ * 闹钟调度（方案 A：AlarmManager 链式单发）
+ * 使用 setAndAllowWhileIdle，不申请 SCHEDULE_EXACT_ALARM，允许分钟级偏移。
+ */
+
+import Context from 'android.content.Context';
+import Intent from 'android.content.Intent';
+import PendingIntent from 'android.app.PendingIntent';
+import AlarmManager from 'android.app.AlarmManager';
+import { readConfig, readTodayState, setNextAlarmAt, clearNextAlarmAt, readRecordStatus } from './Store.uts';
+import { todayString, nextWorkTime, addMinutes, workTimeOf, isWorkday } from './DateUtil.uts';
+import { AlarmReceiver } from './Receivers.uts';
+
+export const ACTION_REMINDER : string = "io.dcloud.nfcclockin.ACTION_REMINDER";
+
+const REQUEST_CODE : Int = 4001;
+
+function context() : Context {
+  return UTSAndroid.getAppContext()!;
+}
+
+function alarmManager() : AlarmManager {
+  return context().getSystemService(Context.ALARM_SERVICE) as AlarmManager;
+}
+
+function reminderPendingIntent() : PendingIntent {
+  const intent = new Intent(context(), AlarmReceiver().javaClass);
+  intent.setAction(ACTION_REMINDER);
+  let pendingFlags : Int = PendingIntent.FLAG_UPDATE_CURRENT;
+  pendingFlags = pendingFlags | PendingIntent.FLAG_IMMUTABLE;
+  return PendingIntent.getBroadcast(context(), REQUEST_CODE, intent, pendingFlags);
+}
+
+/** 取消当前已注册的提醒闹钟 */
+export function cancelAll() : void {
+  alarmManager().cancel(reminderPendingIntent());
+  clearNextAlarmAt();
+}
+
+export function scheduleAt(timestamp : number) : void {
+  if (timestamp <= 0) {
+    return;
+  }
+  const manager = alarmManager();
+  const pending = reminderPendingIntent();
+  manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, timestamp.toLong(), pending);
+  setNextAlarmAt(timestamp);
+}
+
+/**
+ * 重新计算并注册下一次提醒。
+ * - 今日已完成（checked / skipped）→ 排到下一个工作日
+ * - 今日处于 deferred → 排到 deferUntil
+ * - 其他 → 若今日提醒时间未到则排今日，否则排下一个工作日
+ */
+export function reschedule() : void {
+  const now = Date.now();
+  const config = readConfig();
+  cancelOnly();
+
+  if (!config.enabled) {
+    setNextAlarmAt(0);
+    return;
+  }
+
+  const today = todayString();
+  const todayStatus = readRecordStatus(today);
+  const state = readTodayState();
+
+  // 今日已完成，直接排下一个工作日
+  if (todayStatus != null) {
+    const nextTime = nextWorkTime(now, config.startHour, config.startMinute);
+    if (nextTime > 0) {
+      scheduleAt(nextTime);
+    }
+    return;
+  }
+
+  // 今日处于延迟中
+  if (state.status == "deferred" && state.deferUntil > now) {
+    scheduleAt(state.deferUntil);
+    return;
+  }
+
+  // 今日处于提醒中 → 按间隔继续
+  if (state.status == "ringing") {
+    scheduleAt(addMinutes(now, config.intervalMinute));
+    return;
+  }
+
+  // 今日非工作日 → 下一个工作日
+  if (!isWorkday(now)) {
+    const nextTime = nextWorkTime(now, config.startHour, config.startMinute);
+    if (nextTime > 0) {
+      scheduleAt(nextTime);
+    }
+    return;
+  }
+
+  const todayTime = workTimeOf(now, config.startHour, config.startMinute);
+  if (todayTime > now) {
+    scheduleAt(todayTime);
+    return;
+  }
+
+  const nextTime = nextWorkTime(now, config.startHour, config.startMinute);
+  if (nextTime > 0) {
+    scheduleAt(nextTime);
+  }
+}
+
+/** 只取消闹钟 */
+function cancelOnly() : void {
+  alarmManager().cancel(reminderPendingIntent());
+}

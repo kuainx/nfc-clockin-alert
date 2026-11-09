@@ -1,23 +1,26 @@
 <script setup lang="ts">
-	// #ifdef APP-ANDROID || APP-HARMONY
+	// #ifdef APP-ANDROID
+	import { rescheduleAll, requestNotificationPermission } from '@/uni_modules/nfc-clockin-alert'
+
 	let firstBackTime = 0
 	// #endif
 
 	onLaunch(() => {
-		console.log('App Launch')
+		// #ifdef APP-ANDROID
+		requestNotificationPermission(null)
+		rescheduleAll()
+		// #endif
 	})
 
+	// #ifdef APP-ANDROID
 	onAppShow(() => {
-		console.log('App Show')
+		rescheduleAll()
 	})
 
 	onAppHide(() => {
-		console.log('App Hide')
 	})
 
-	// #ifdef APP-ANDROID || APP-HARMONY
 	onLastPageBackPress(() => {
-		console.log('App LastPageBackPress')
 		if (firstBackTime == 0) {
 			uni.showToast({
 				title: '再按一次退出应用',
@@ -34,7 +37,6 @@
 	})
 
 	onExit(() => {
-		console.log('App Exit')
 	})
 	// #endif
 </script>

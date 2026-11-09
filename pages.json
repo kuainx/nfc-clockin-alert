@@ -1,17 +1,27 @@
 {
-	"pages": [ //pages数组中第一项表示应用启动页，参考：https://doc.dcloud.net.cn/uni-app-x/collocation/pagesjson.html
+	"pages": [
 		{
-			"path": "pages/index/index",
+			"path": "pages/calendar/calendar",
 			"style": {
-				"navigationBarTitleText": "uni-app x"
+				"navigationStyle": "custom",
+				"backgroundColor": "#F5F6F8"
+			}
+		},
+		{
+			"path": "pages/settings/settings",
+			"style": {
+				"navigationBarTitleText": "设置",
+				"navigationBarBackgroundColor": "#FFFFFF",
+				"navigationBarTextStyle": "black",
+				"backgroundColor": "#F5F6F8"
 			}
 		}
 	],
 	"globalStyle": {
 		"navigationBarTextStyle": "black",
-		"navigationBarTitleText": "uni-app x",
-		"navigationBarBackgroundColor": "#F8F8F8",
-		"backgroundColor": "#F8F8F8"
+		"navigationBarTitleText": "NFC 打卡闹钟",
+		"navigationBarBackgroundColor": "#FFFFFF",
+		"backgroundColor": "#F5F6F8"
 	},
 	"uniIdRouter": {}
 }

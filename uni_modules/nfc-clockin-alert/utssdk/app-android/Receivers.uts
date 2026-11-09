@@ -1,0 +1,60 @@
+/**
+ * 广播接收器集合
+ * - AlarmReceiver：闹钟到点
+ * - DeferActionReceiver：通知栏「延迟5分钟」
+ * - BootReceiver：开机 / 应用更新后重排闹钟
+ * 注意：均在 uni 运行环境可能未初始化的状态下执行，禁止调用 uni API。
+ */
+
+import BroadcastReceiver from 'android.content.BroadcastReceiver';
+import Context from 'android.content.Context';
+import Intent from 'android.content.Intent';
+import { runReminder } from './ReminderRunner.uts';
+import { reschedule } from './Scheduler.uts';
+import { updateTodayStatus } from './Store.uts';
+import { cancelReminder } from './Notifier.uts';
+import { addMinutes } from './DateUtil.uts';
+
+/** 闹钟到点 */
+export class AlarmReceiver extends BroadcastReceiver {
+  constructor() {
+    super();
+  }
+
+  override onReceive(context : Context, intent : Intent) {
+    runReminder();
+  }
+}
+
+/** 通知栏「延迟5分钟」快捷操作 */
+export class DeferActionReceiver extends BroadcastReceiver {
+  constructor() {
+    super();
+  }
+
+  override onReceive(context : Context, intent : Intent) {
+    const action = intent.getAction();
+    if (action != "io.dcloud.nfcclockin.ACTION_DEFER") {
+      return;
+    }
+    const deferUntil = addMinutes(Date.now(), 5);
+    updateTodayStatus("deferred", deferUntil);
+    cancelReminder();
+    reschedule();
+  }
+}
+
+/** 开机 / 应用更新 */
+export class BootReceiver extends BroadcastReceiver {
+  constructor() {
+    super();
+  }
+
+  override onReceive(context : Context, intent : Intent) {
+    const action = intent.getAction();
+    if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) {
+      return;
+    }
+    reschedule();
+  }
+}

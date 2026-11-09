@@ -1,0 +1,858 @@
+<template>
+  <view class="page">
+    <!-- 自定义导航栏 -->
+    <view class="nav-bar" :style="{ paddingTop: statusBarHeight + 'px' }">
+      <view class="nav-bar-inner">
+        <text class="nav-title">NFC 打卡闹钟</text>
+        <view class="nav-action" @tap="goSettings">
+          <text class="nav-action-text">设置</text>
+        </view>
+      </view>
+    </view>
+
+    <scroll-view class="content" direction="vertical">
+      <!-- 累计统计 -->
+      <view class="stat-card">
+        <view class="stat-left">
+          <text class="stat-label">累计打卡</text>
+          <view class="stat-value-row">
+            <text class="stat-value">{{ checkedCount }}</text>
+            <text class="stat-unit">天</text>
+          </view>
+        </view>
+        <view class="stat-right">
+          <text class="stat-next-label">下次提醒</text>
+          <text class="stat-next-value">{{ nextAlarmText }}</text>
+        </view>
+      </view>
+
+      <!-- 环境提示 -->
+      <view v-if="!nfcSupported" class="banner banner-error" @tap="openEnvSettings">
+        <text class="banner-text">当前设备不支持 NFC</text>
+      </view>
+      <view v-else-if="!nfcEnabled" class="banner banner-warn" @tap="openNfcSettingsTap">
+        <text class="banner-text">NFC 未开启，点击开启</text>
+      </view>
+      <view v-else-if="!hasCard" class="banner banner-warn" @tap="goSettings">
+        <text class="banner-text">尚未录入 NFC 卡，点击前往设置</text>
+      </view>
+
+      <!-- 日历 -->
+      <view class="calendar-card">
+        <view class="calendar-header">
+          <view class="month-btn" @tap="prevMonth">
+            <text class="month-btn-text">‹</text>
+          </view>
+          <text class="month-title">{{ viewYear }}年{{ viewMonth }}月</text>
+          <view class="month-btn" @tap="nextMonth">
+            <text class="month-btn-text">›</text>
+          </view>
+        </view>
+
+        <view class="week-row">
+          <text v-for="w in weekLabels" :key="w" class="week-cell">{{ w }}</text>
+        </view>
+
+        <view class="grid">
+          <view v-for="cell in cells" :key="cell.key" class="grid-cell">
+            <view v-if="cell.day > 0"
+              :class="['day-box', cell.status == 'checked' ? 'day-checked' : (cell.status == 'skipped' ? 'day-skipped' : ''), cell.isToday ? 'day-today' : '', cell.isFuture ? 'day-future' : '']">
+              <text
+                :class="['day-text', cell.status == 'checked' ? 'day-text-checked' : (cell.status == 'skipped' ? 'day-text-skipped' : ''), cell.isFuture ? 'day-text-future' : '']">{{ cell.day }}</text>
+            </view>
+          </view>
+        </view>
+
+        <view class="legend">
+          <view class="legend-item">
+            <view class="legend-dot legend-dot-checked"></view>
+            <text class="legend-text">已打卡</text>
+          </view>
+          <view class="legend-item">
+            <view class="legend-ring"></view>
+            <text class="legend-text">已跳过</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 实时信息 -->
+      <view class="info-card">
+        <view class="info-row">
+          <text class="info-label">当前日期</text>
+          <text class="info-value">{{ todayDateText }}</text>
+        </view>
+        <view class="info-row">
+          <text class="info-label">当前时间</text>
+          <text class="info-value info-clock">{{ clockText }}</text>
+        </view>
+        <view class="info-row">
+          <text class="info-label">下次计划打卡</text>
+          <text class="info-value">{{ nextAlarmText }}</text>
+        </view>
+        <view class="info-row">
+          <text class="info-label">今日状态</text>
+          <text :class="['info-value', statusClass]">{{ statusText }}</text>
+        </view>
+      </view>
+
+      <view class="bottom-space"></view>
+    </scroll-view>
+
+    <!-- 提醒浮层 -->
+    <view v-if="isRinging" class="reminder-panel">
+      <view class="reminder-head">
+        <text class="reminder-title">{{ todayState.status == 'deferred' ? '已延迟提醒' : '打卡提醒已触发' }}</text>
+        <text class="reminder-sub">{{ reminderSubText }}</text>
+      </view>
+      <view class="reminder-tip-row">
+        <text class="reminder-tip">{{ scanHintText }}</text>
+      </view>
+      <view class="reminder-actions">
+        <view class="btn btn-secondary" @tap="onDefer">
+          <text class="btn-text btn-text-secondary">延迟 5 分钟</text>
+        </view>
+        <view class="btn btn-primary" @tap="goSettings">
+          <text class="btn-text btn-text-primary">前往设置</text>
+        </view>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="ts">
+  import { onReady, onShow, onHide, onUnload } from '@dcloudio/uni-app'
+  import {
+    getConfig, getRecords, getCheckedCount, getTodayState,
+    markChecked, defer,
+    isNfcSupportedCheck, isNfcEnabledCheck, openNfcSettings, openAppSettings,
+    beginScan, endScan, onActivityVisible, onActivityInvisible,
+    rescheduleAll
+  } from '@/uni_modules/nfc-clockin-alert'
+  import type { DayRecord, TodayState, ScanOptions } from '@/uni_modules/nfc-clockin-alert'
+
+  const weekLabels : string[] = ['一', '二', '三', '四', '五', '六', '日']
+
+  const statusBarHeight = ref(0)
+  const checkedCount = ref(0)
+  const nfcSupported = ref(true)
+  const nfcEnabled = ref(true)
+  const hasCard = ref(false)
+
+  const viewYear = ref(0)
+  const viewMonth = ref(0)
+  const todayDateText = ref('')
+  const clockText = ref('')
+  const nextAlarmText = ref('--')
+  const statusText = ref('未到提醒时间')
+  const statusClass = ref('')
+  const isRinging = ref(false)
+
+  const todayState = ref<TodayState>({
+    date: '', status: 'idle', deferUntil: 0, nextAlarmAt: 0, ringCount: 0
+  } as TodayState)
+
+  const recordMap = ref<Map<string, string>>(new Map<string, string>())
+
+  type Cell = {
+    key : string
+    day : number
+    status : string
+    isToday : boolean
+    isFuture : boolean
+  }
+
+  const cells = ref<Cell[]>([])
+
+  let tickTimer : number = -1
+  let scanning = false
+
+  const reminderSubText = computed(() => {
+    const state = todayState.value
+    if (state.status == 'deferred' && state.deferUntil > 0) {
+      const remain = Math.max(0, state.deferUntil - Date.now())
+      const min = Math.floor(remain / 60000)
+      const sec = Math.floor((remain % 60000) / 1000)
+      return '剩余 ' + pad2(min) + ':' + pad2(sec)
+    }
+    return '已提醒 ' + state.ringCount + ' 次'
+  })
+
+  const scanHintText = computed(() => {
+    if (!hasCard.value) {
+      return '尚未录入 NFC 卡，请先前往设置录入'
+    }
+    if (!nfcEnabled.value) {
+      return '请先开启系统 NFC 功能'
+    }
+    return '请将 NFC 卡贴近手机感应区完成打卡'
+  })
+
+  function pad2(v : number) : string {
+    return v < 10 ? '0' + v : '' + v
+  }
+
+  function formatDateTime(ts : number) : string {
+    if (ts <= 0) {
+      return '--'
+    }
+    const d = new Date(ts)
+    const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
+    return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + week + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes())
+  }
+
+  function formatToday() : string {
+    const d = new Date()
+    const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
+    return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + week
+  }
+
+  function formatClock() : string {
+    const d = new Date()
+    return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds())
+  }
+
+  function dateKey(year : number, month : number, day : number) : string {
+    return '' + year + '-' + pad2(month) + '-' + pad2(day)
+  }
+
+  function nowYear() : number { return new Date().getFullYear() }
+  function nowMonth() : number { return new Date().getMonth() + 1 }
+  function nowDay() : number { return new Date().getDate() }
+
+  function buildCells() : void {
+    const year = viewYear.value
+    const month = viewMonth.value
+    const first = new Date(year, month - 1, 1)
+    // getDay: 0=周日 需要转成 周一=0
+    const offset = (first.getDay() + 6) % 7
+    const total = new Date(year, month, 0).getDate()
+
+    const ty = nowYear()
+    const tm = nowMonth()
+    const td = nowDay()
+
+    const list : Cell[] = []
+    for (let i = 0; i < offset; i++) {
+      list.push({ key: 'e' + i, day: 0, status: '', isToday: false, isFuture: false } as Cell)
+    }
+    for (let d = 1; d <= total; d++) {
+      const key = dateKey(year, month, d)
+      const isToday = (year == ty && month == tm && d == td)
+      const isFuture = (year > ty) || (year == ty && month > tm) || (year == ty && month == tm && d > td)
+      const status = recordMap.value.get(key) ?? ''
+      list.push({ key: key, day: d, status: status, isToday: isToday, isFuture: isFuture } as Cell)
+    }
+    while (list.length % 7 != 0) {
+      list.push({ key: 'f' + list.length, day: 0, status: '', isToday: false, isFuture: false } as Cell)
+    }
+    cells.value = list
+  }
+
+  function refreshRecords() : void {
+    const map : Map<string, string> = new Map<string, string>()
+    const records : DayRecord[] = getRecords()
+    for (let i = 0; i < records.length; i++) {
+      map.set(records[i].date, records[i].status as string)
+    }
+    recordMap.value = map
+    buildCells()
+  }
+
+  function computeStatusText(state : TodayState) : string {
+    if (state.status == 'checked') {
+      return '今日已打卡'
+    }
+    if (state.status == 'skipped') {
+      return '今日已跳过'
+    }
+    if (state.status == 'deferred') {
+      return '已延迟提醒'
+    }
+    if (state.status == 'ringing') {
+      return '提醒中，请刷卡'
+    }
+    return '未到提醒时间'
+  }
+
+  function computeStatusClass(state : TodayState) : string {
+    if (state.status == 'checked') return 'status-checked'
+    if (state.status == 'skipped') return 'status-skipped'
+    if (state.status == 'ringing' || state.status == 'deferred') return 'status-ringing'
+    return ''
+  }
+
+  function refreshAll() : void {
+    // #ifdef APP-ANDROID
+    const cfg = getConfig()
+    hasCard.value = cfg.cardId.length > 0
+
+    nfcSupported.value = isNfcSupportedCheck()
+    nfcEnabled.value = isNfcEnabledCheck()
+
+    checkedCount.value = getCheckedCount()
+
+    const state = getTodayState()
+    todayState.value = state
+    isRinging.value = (state.status == 'ringing' || state.status == 'deferred')
+    statusText.value = computeStatusText(state)
+    statusClass.value = computeStatusClass(state)
+
+    if (state.nextAlarmAt > 0) {
+      nextAlarmText.value = formatDateTime(state.nextAlarmAt)
+    } else if (cfg.enabled) {
+      nextAlarmText.value = '未设置'
+    } else {
+      nextAlarmText.value = '提醒已关闭'
+    }
+
+    refreshRecords()
+    // #endif
+  }
+
+  function ensureScan() : void {
+    // #ifdef APP-ANDROID
+    if (scanning) {
+      return
+    }
+    if (!isNfcSupportedCheck() || !isNfcEnabledCheck()) {
+      return
+    }
+    const options : ScanOptions = {
+      once: false,
+      timeoutMs: 0,
+      onTag: (uid : string) => {
+        handleTag(uid)
+      },
+      onError: (_code : number, message : string) => {
+        console.log('NFC scan error: ' + message)
+      }
+    } as ScanOptions
+    beginScan(options)
+    scanning = true
+    // #endif
+  }
+
+  function stopScanIfNeeded() : void {
+    // #ifdef APP-ANDROID
+    if (scanning) {
+      endScan()
+      scanning = false
+    }
+    // #endif
+  }
+
+  function handleTag(uid : string) : void {
+    // #ifdef APP-ANDROID
+    const cfg = getConfig()
+    if (cfg.cardId.length == 0) {
+      uni.showToast({ title: '请先在设置中录入 NFC 卡', icon: 'none' })
+      return
+    }
+    const state = getTodayState()
+    if (state.status == 'checked' || state.status == 'skipped') {
+      uni.showToast({ title: '今日已完成记录', icon: 'none' })
+      return
+    }
+    if (cfg.cardId.toUpperCase() != uid.toUpperCase()) {
+      uni.showToast({ title: '卡片不匹配', icon: 'none' })
+      return
+    }
+    const ok = markChecked('')
+    if (ok) {
+      uni.showToast({ title: '打卡成功', icon: 'success' })
+      refreshAll()
+    } else {
+      uni.showToast({ title: '今日已完成记录', icon: 'none' })
+    }
+    // #endif
+  }
+
+  function onDefer() : void {
+    // #ifdef APP-ANDROID
+    defer(5)
+    uni.showToast({ title: '已延迟 5 分钟', icon: 'none' })
+    refreshAll()
+    // #endif
+  }
+
+  function prevMonth() : void {
+    let y = viewYear.value
+    let m = viewMonth.value - 1
+    if (m < 1) {
+      m = 12
+      y = y - 1
+    }
+    viewYear.value = y
+    viewMonth.value = m
+    buildCells()
+  }
+
+  function nextMonth() : void {
+    let y = viewYear.value
+    let m = viewMonth.value + 1
+    if (m > 12) {
+      m = 1
+      y = y + 1
+    }
+    viewYear.value = y
+    viewMonth.value = m
+    buildCells()
+  }
+
+  function goSettings() : void {
+    uni.navigateTo({ url: '/pages/settings/settings' })
+  }
+
+  function openNfcSettingsTap() : void {
+    // #ifdef APP-ANDROID
+    openNfcSettings()
+    // #endif
+  }
+
+  function openEnvSettings() : void {
+    // #ifdef APP-ANDROID
+    openAppSettings()
+    // #endif
+  }
+
+  function tick() : void {
+    todayDateText.value = formatToday()
+    clockText.value = formatClock()
+    const state = getTodayState()
+    todayState.value = state
+    isRinging.value = (state.status == 'ringing' || state.status == 'deferred')
+  }
+
+  function startTick() : void {
+    stopTick()
+    tick()
+    tickTimer = setInterval(tick, 1000) as number
+  }
+
+  function stopTick() : void {
+    if (tickTimer != -1) {
+      clearInterval(tickTimer)
+      tickTimer = -1
+    }
+  }
+
+  onReady(() => {
+    const win = uni.getWindowInfo()
+    statusBarHeight.value = win.statusBarHeight
+    viewYear.value = nowYear()
+    viewMonth.value = nowMonth()
+    todayDateText.value = formatToday()
+    clockText.value = formatClock()
+    refreshAll()
+    startTick()
+  })
+
+  onShow(() => {
+    // #ifdef APP-ANDROID
+    rescheduleAll()
+    onActivityVisible()
+    // #endif
+    refreshAll()
+    ensureScan()
+    if (tickTimer == -1) {
+      startTick()
+    }
+  })
+
+  onHide(() => {
+    // #ifdef APP-ANDROID
+    onActivityInvisible()
+    // #endif
+    stopScanIfNeeded()
+    stopTick()
+  })
+
+  onUnload(() => {
+    stopScanIfNeeded()
+    stopTick()
+  })
+</script>
+
+<style>
+  .page {
+    flex: 1;
+    background-color: #F5F6F8;
+  }
+
+  .nav-bar {
+    background-color: #FFFFFF;
+    flex-direction: column;
+  }
+
+  .nav-bar-inner {
+    height: 44px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .nav-title {
+    font-size: 17px;
+    font-weight: bold;
+    color: #1A1A1A;
+  }
+
+  .nav-action {
+    padding: 6px 10px;
+  }
+
+  .nav-action-text {
+    font-size: 15px;
+    color: #3478F6;
+  }
+
+  .content {
+    flex: 1;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .stat-card {
+    flex-direction: row;
+    background-color: #3478F6;
+    border-radius: 14px;
+    padding: 18px;
+    margin-top: 12px;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .stat-left {
+    flex-direction: column;
+  }
+
+  .stat-label {
+    font-size: 13px;
+    color: #D6E4FF;
+  }
+
+  .stat-value-row {
+    flex-direction: row;
+    align-items: flex-end;
+    margin-top: 4px;
+  }
+
+  .stat-value {
+    font-size: 32px;
+    font-weight: bold;
+    color: #FFFFFF;
+  }
+
+  .stat-unit {
+    font-size: 14px;
+    color: #D6E4FF;
+    margin-left: 4px;
+    margin-bottom: 6px;
+  }
+
+  .stat-right {
+    flex-direction: column;
+    align-items: flex-end;
+  }
+
+  .stat-next-label {
+    font-size: 13px;
+    color: #D6E4FF;
+  }
+
+  .stat-next-value {
+    font-size: 15px;
+    color: #FFFFFF;
+    margin-top: 6px;
+    font-weight: bold;
+  }
+
+  .banner {
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-top: 12px;
+  }
+
+  .banner-warn {
+    background-color: #FFF4E5;
+  }
+
+  .banner-error {
+    background-color: #FFEBEA;
+  }
+
+  .banner-text {
+    font-size: 13px;
+    color: #B25E09;
+  }
+
+  .calendar-card {
+    background-color: #FFFFFF;
+    border-radius: 14px;
+    padding: 16px 12px;
+    margin-top: 12px;
+  }
+
+  .calendar-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 12px;
+  }
+
+  .month-btn {
+    width: 36px;
+    height: 36px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .month-btn-text {
+    font-size: 22px;
+    color: #3478F6;
+  }
+
+  .month-title {
+    font-size: 16px;
+    font-weight: bold;
+    color: #1A1A1A;
+  }
+
+  .week-row {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding-bottom: 6px;
+  }
+
+  .week-cell {
+    width: 14.2857%;
+    text-align: center;
+    font-size: 12px;
+    color: #9AA0A6;
+  }
+
+  .grid {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .grid-cell {
+    width: 14.2857%;
+    height: 42px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .day-box {
+    width: 34px;
+    height: 34px;
+    border-radius: 17px;
+    align-items: center;
+    justify-content: center;
+    border-width: 1px;
+    border-style: solid;
+    border-color: transparent;
+  }
+
+  .day-checked {
+    background-color: #34C759;
+  }
+
+  .day-skipped {
+    border-color: #FF9500;
+    background-color: transparent;
+  }
+
+  .day-today {
+    border-color: #3478F6;
+  }
+
+  .day-future {
+    background-color: transparent;
+  }
+
+  .day-text {
+    font-size: 14px;
+    color: #1A1A1A;
+  }
+
+  .day-text-checked {
+    color: #FFFFFF;
+    font-weight: bold;
+  }
+
+  .day-text-skipped {
+    color: #FF9500;
+    font-weight: bold;
+  }
+
+  .day-text-future {
+    color: #C7C7CC;
+  }
+
+  .legend {
+    flex-direction: row;
+    justify-content: center;
+    padding-top: 12px;
+  }
+
+  .legend-item {
+    flex-direction: row;
+    align-items: center;
+    margin-left: 10px;
+    margin-right: 10px;
+  }
+
+  .legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 6px;
+  }
+
+  .legend-dot-checked {
+    background-color: #34C759;
+  }
+
+  .legend-ring {
+    width: 12px;
+    height: 12px;
+    border-radius: 6px;
+    border-width: 1.5px;
+    border-style: solid;
+    border-color: #FF9500;
+  }
+
+  .legend-text {
+    font-size: 12px;
+    color: #6B7280;
+    margin-left: 6px;
+  }
+
+  .info-card {
+    background-color: #FFFFFF;
+    border-radius: 14px;
+    padding: 4px 16px;
+    margin-top: 12px;
+  }
+
+  .info-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 14px;
+    padding-bottom: 14px;
+    border-bottom-width: 1px;
+    border-bottom-style: solid;
+    border-bottom-color: #F0F0F0;
+  }
+
+  .info-label {
+    font-size: 14px;
+    color: #6B7280;
+  }
+
+  .info-value {
+    font-size: 14px;
+    color: #1A1A1A;
+  }
+
+  .info-clock {
+    color: #3478F6;
+    font-weight: bold;
+  }
+
+  .status-checked {
+    color: #34C759;
+    font-weight: bold;
+  }
+
+  .status-skipped {
+    color: #FF9500;
+    font-weight: bold;
+  }
+
+  .status-ringing {
+    color: #FF3B30;
+    font-weight: bold;
+  }
+
+  .bottom-space {
+    height: 160px;
+  }
+
+  .reminder-panel {
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: 24px;
+    background-color: #FFFFFF;
+    border-radius: 16px;
+    padding: 16px;
+    border-width: 1px;
+    border-style: solid;
+    border-color: #FFE0DE;
+  }
+
+  .reminder-head {
+    flex-direction: column;
+  }
+
+  .reminder-title {
+    font-size: 16px;
+    font-weight: bold;
+    color: #FF3B30;
+  }
+
+  .reminder-sub {
+    font-size: 12px;
+    color: #9AA0A6;
+    margin-top: 4px;
+  }
+
+  .reminder-tip-row {
+    margin-top: 10px;
+  }
+
+  .reminder-tip {
+    font-size: 13px;
+    color: #6B7280;
+  }
+
+  .reminder-actions {
+    flex-direction: row;
+    margin-top: 14px;
+  }
+
+  .btn {
+    flex: 1;
+    height: 44px;
+    border-radius: 10px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .btn-secondary {
+    background-color: #F2F3F5;
+    margin-right: 8px;
+  }
+
+  .btn-primary {
+    background-color: #3478F6;
+    margin-left: 8px;
+  }
+
+  .btn-text {
+    font-size: 15px;
+  }
+
+  .btn-text-secondary {
+    color: #1A1A1A;
+  }
+
+  .btn-text-primary {
+    color: #FFFFFF;
+    font-weight: bold;
+  }
+</style>

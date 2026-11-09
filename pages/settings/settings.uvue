@@ -1,0 +1,591 @@
+<template>
+  <view class="page">
+    <scroll-view class="content" direction="vertical">
+      <!-- NFC 卡片 -->
+      <view class="section">
+        <text class="section-title">NFC 卡片</text>
+        <view class="card">
+          <view class="row">
+            <text class="row-label">绑定状态</text>
+            <text :class="['row-value', hasCard ? 'value-ok' : 'value-warn']">{{ hasCard ? '已绑定' : '未绑定' }}</text>
+          </view>
+          <view v-if="hasCard" class="row">
+            <text class="row-label">卡片 ID</text>
+            <text class="row-value mono">{{ cardId }}</text>
+          </view>
+          <view class="row-divider"></view>
+          <view class="actions">
+            <view class="btn btn-secondary" @tap="startBinding">
+              <text class="btn-text btn-text-secondary">{{ hasCard ? '重新录入' : '录入卡片' }}</text>
+            </view>
+            <view v-if="hasCard" class="btn btn-danger" @tap="unbind">
+              <text class="btn-text btn-text-danger">解除绑定</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 提醒设置 -->
+      <view class="section">
+        <text class="section-title">提醒设置</text>
+        <view class="card">
+          <picker mode="time" :value="startTimeValue" @change="onStartTimeChange">
+            <view class="row">
+              <text class="row-label">开始提示时间</text>
+              <text class="row-value">{{ startTimeText }}</text>
+            </view>
+          </picker>
+          <view class="row-divider"></view>
+          <picker mode="selector" :value="intervalIndex" :range="intervalLabels" @change="onIntervalChange">
+            <view class="row">
+              <text class="row-label">提示间隔时间</text>
+              <text class="row-value">{{ intervalMinute }} 分钟</text>
+            </view>
+          </picker>
+        </view>
+      </view>
+
+      <!-- 今日不打卡 -->
+      <view class="section">
+        <text class="section-title">今日操作</text>
+        <view class="card">
+          <view class="row">
+            <text class="row-label">今日状态</text>
+            <text :class="['row-value', todayStatusClass]">{{ todayStatusText }}</text>
+          </view>
+          <view class="row-divider"></view>
+          <view class="actions">
+            <view :class="['btn', skipDisabled ? 'btn-disabled' : 'btn-warning']" @tap="onSkipToday">
+              <text :class="['btn-text', skipDisabled ? 'btn-text-disabled' : 'btn-text-warning']">今日不打卡</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 运行环境检查 -->
+      <view class="section">
+        <text class="section-title">运行环境</text>
+        <view class="card">
+          <view class="row" @tap="toggleNotification">
+            <text class="row-label">通知权限</text>
+            <text
+              :class="['row-value', notificationEnabled ? 'value-ok' : 'value-warn']">{{ notificationEnabled ? '已开启' : '未开启，点击申请' }}</text>
+          </view>
+          <view class="row-divider"></view>
+          <view class="row" @tap="toggleBattery">
+            <text class="row-label">电池优化</text>
+            <text
+              :class="['row-value', batteryIgnored ? 'value-ok' : 'value-warn']">{{ batteryIgnored ? '已忽略' : '未忽略，点击设置' }}</text>
+          </view>
+          <view class="row-divider"></view>
+          <view class="row" @tap="openSettings">
+            <text class="row-label">自启动 / 后台权限</text>
+            <text class="row-value link">去设置</text>
+          </view>
+        </view>
+        <text class="section-tip">部分手机需手动允许自启动与后台运行，否则可能收不到提醒。</text>
+      </view>
+
+      <view class="bottom-space"></view>
+    </scroll-view>
+
+    <!-- 录入卡片遮罩 -->
+    <view v-if="binding" class="overlay">
+      <view class="overlay-card">
+        <text class="overlay-title">请将 NFC 卡贴近手机感应区</text>
+        <text class="overlay-sub">{{ bindRemainText }}</text>
+        <view class="overlay-btn" @tap="cancelBinding">
+          <text class="overlay-btn-text">取消</text>
+        </view>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="ts">
+  import { onShow, onHide, onUnload } from '@dcloudio/uni-app'
+  import {
+    getConfig, saveConfig, getTodayState, markSkipped,
+    isNfcSupportedCheck, isNfcEnabledCheck, openNfcSettings,
+    beginScan, endScan, onActivityVisible, onActivityInvisible,
+    requestNotificationPermission, notificationEnabled as isNotificationEnabled,
+    isIgnoringBatteryOptimizations, requestIgnoreBatteryOptimizations, openAppSettings
+  } from '@/uni_modules/nfc-clockin-alert'
+  import type { ClockConfig, TodayState, ScanOptions } from '@/uni_modules/nfc-clockin-alert'
+
+  const hasCard = ref(false)
+  const cardId = ref('')
+  const startHour = ref(8)
+  const startMinute = ref(30)
+  const intervalMinute = ref(1)
+  const enabled = ref(true)
+
+  const notificationEnabled = ref(true)
+  const batteryIgnored = ref(false)
+  const nfcSupported = ref(true)
+  const nfcEnabled = ref(true)
+
+  const binding = ref(false)
+  const bindRemain = ref(60)
+  const todayState = ref<TodayState>({ date: '', status: 'idle', deferUntil: 0, nextAlarmAt: 0, ringCount: 0 } as TodayState)
+
+  const intervalLabels : string[] = (() => {
+    const list : string[] = []
+    for (let i = 1; i <= 30; i++) {
+      list.push(i + ' 分钟')
+    }
+    return list
+  })()
+
+  let bindTimer : number = -1
+
+  const startTimeText = computed(() => {
+    return pad2(startHour.value) + ':' + pad2(startMinute.value)
+  })
+
+  const startTimeValue = computed(() => {
+    return pad2(startHour.value) + ':' + pad2(startMinute.value)
+  })
+
+  const intervalIndex = computed(() => {
+    const idx = intervalMinute.value - 1
+    return idx < 0 ? 0 : (idx > 29 ? 29 : idx)
+  })
+
+  const bindRemainText = computed(() => {
+    return '倒计时 ' + bindRemain.value + ' 秒'
+  })
+
+  const todayStatusText = computed(() => {
+    const s = todayState.value.status
+    if (s == 'checked') return '已打卡'
+    if (s == 'skipped') return '已跳过'
+    if (s == 'deferred') return '已延迟'
+    if (s == 'ringing') return '提醒中'
+    return '未完成'
+  })
+
+  const todayStatusClass = computed(() => {
+    const s = todayState.value.status
+    if (s == 'checked') return 'value-ok'
+    if (s == 'skipped') return 'value-warn'
+    if (s == 'deferred' || s == 'ringing') return 'value-danger'
+    return ''
+  })
+
+  const skipDisabled = computed(() => {
+    const s = todayState.value.status
+    return s == 'checked' || s == 'skipped'
+  })
+
+  function pad2(v : number) : string {
+    return v < 10 ? '0' + v : '' + v
+  }
+
+  function loadConfig() : void {
+    // #ifdef APP-ANDROID
+    const cfg = getConfig()
+    hasCard.value = cfg.cardId.length > 0
+    cardId.value = cfg.cardId
+    startHour.value = cfg.startHour
+    startMinute.value = cfg.startMinute
+    intervalMinute.value = cfg.intervalMinute
+    enabled.value = cfg.enabled
+    // #endif
+  }
+
+  function loadEnv() : void {
+    // #ifdef APP-ANDROID
+    notificationEnabled.value = isNotificationEnabled()
+    batteryIgnored.value = isIgnoringBatteryOptimizations()
+    nfcSupported.value = isNfcSupportedCheck()
+    nfcEnabled.value = isNfcEnabledCheck()
+    todayState.value = getTodayState()
+    // #endif
+  }
+
+  function persist() : void {
+    // #ifdef APP-ANDROID
+    const cfg : ClockConfig = {
+      cardId: cardId.value,
+      startHour: startHour.value,
+      startMinute: startMinute.value,
+      intervalMinute: intervalMinute.value,
+      enabled: enabled.value
+    } as ClockConfig
+    saveConfig(cfg)
+    // #endif
+  }
+
+  function onStartTimeChange(e : UniPickerChangeEvent) : void {
+    const value = e.detail.value as string
+    const parts = value.split(':')
+    if (parts.length != 2) {
+      return
+    }
+    startHour.value = parseInt(parts[0])
+    startMinute.value = parseInt(parts[1])
+    persist()
+    uni.showToast({ title: '已保存开始时间', icon: 'none' })
+  }
+
+  function onIntervalChange(e : UniPickerChangeEvent) : void {
+    const index = e.detail.value as number
+    intervalMinute.value = index + 1
+    persist()
+    uni.showToast({ title: '已保存间隔时间', icon: 'none' })
+  }
+
+  /* ---------------------------- 卡片录入 ---------------------------- */
+
+  function startBinding() : void {
+    // #ifdef APP-ANDROID
+    if (!isNfcSupportedCheck()) {
+      uni.showToast({ title: '当前设备不支持 NFC', icon: 'none' })
+      return
+    }
+    if (!isNfcEnabledCheck()) {
+      openNfcSettings()
+      uni.showToast({ title: '请先开启系统 NFC', icon: 'none' })
+      return
+    }
+    binding.value = true
+    bindRemain.value = 60
+    bindTimer = setInterval(() => {
+      bindRemain.value = bindRemain.value - 1
+      if (bindRemain.value <= 0) {
+        cancelBinding()
+        uni.showToast({ title: '未读取到卡片', icon: 'none' })
+      }
+    }, 1000)
+    const options : ScanOptions = {
+      once: true,
+      timeoutMs: 60000,
+      onTag: (uid : string) => {
+        cardId.value = uid
+        hasCard.value = true
+        persist()
+        cancelBinding()
+        uni.showToast({ title: '卡片录入成功', icon: 'success' })
+      },
+      onTimeout: () => {
+        cancelBinding()
+        uni.showToast({ title: '未读取到卡片', icon: 'none' })
+      },
+      onError: (_code : number, message : string) => {
+        cancelBinding()
+        uni.showToast({ title: '读取失败：' + message, icon: 'none' })
+      }
+    } as ScanOptions
+    beginScan(options)
+    // #endif
+  }
+
+  function cancelBinding() : void {
+    // #ifdef APP-ANDROID
+    if (bindTimer != -1) {
+      clearInterval(bindTimer)
+      bindTimer = -1
+    }
+    if (binding.value) {
+      endScan()
+      binding.value = false
+    }
+    // #endif
+  }
+
+  function unbind() : void {
+    uni.showModal({
+      title: '解除绑定',
+      content: '确定要解除当前 NFC 卡的绑定吗？',
+      success: (res) => {
+        if (res.confirm) {
+          cardId.value = ''
+          hasCard.value = false
+          persist()
+          uni.showToast({ title: '已解除绑定', icon: 'none' })
+        }
+      }
+    })
+  }
+
+  /* ---------------------------- 今日不打卡 ---------------------------- */
+
+  function confirmOnce(step : number) : Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      uni.showModal({
+        title: '今日不打卡（' + step + '/3）',
+        content: step == 3 ? '这是最后一次确认，确认后将跳过今日打卡' : '确定要跳过今日打卡吗？',
+        success: (res) => {
+          resolve(res.confirm)
+        },
+        fail: (_err) => {
+          resolve(false)
+        }
+      })
+    })
+  }
+
+  async function onSkipToday() : Promise<void> {
+    // #ifdef APP-ANDROID
+    if (skipDisabled.value) {
+      uni.showToast({ title: '今日已完成记录', icon: 'none' })
+      return
+    }
+    const ok1 = await confirmOnce(1)
+    if (!ok1) {
+      uni.showToast({ title: '已取消', icon: 'none' })
+      return
+    }
+    const ok2 = await confirmOnce(2)
+    if (!ok2) {
+      uni.showToast({ title: '已取消', icon: 'none' })
+      return
+    }
+    const ok3 = await confirmOnce(3)
+    if (!ok3) {
+      uni.showToast({ title: '已取消', icon: 'none' })
+      return
+    }
+    const done = markSkipped('')
+    if (done) {
+      uni.showToast({ title: '今日已跳过', icon: 'none' })
+      loadEnv()
+      setTimeout(() => {
+        uni.navigateBack()
+      }, 800)
+    } else {
+      uni.showToast({ title: '今日已完成记录', icon: 'none' })
+    }
+    // #endif
+  }
+
+  /* ---------------------------- 环境 ---------------------------- */
+
+  function toggleNotification() : void {
+    // #ifdef APP-ANDROID
+    if (notificationEnabled.value) {
+      openAppSettings()
+      return
+    }
+    requestNotificationPermission((granted : boolean) => {
+      notificationEnabled.value = granted
+      uni.showToast({ title: granted ? '通知权限已开启' : '未获得通知权限', icon: 'none' })
+    })
+    // #endif
+  }
+
+  function toggleBattery() : void {
+    // #ifdef APP-ANDROID
+    requestIgnoreBatteryOptimizations()
+    // #endif
+  }
+
+  function openSettings() : void {
+    // #ifdef APP-ANDROID
+    openAppSettings()
+    // #endif
+  }
+
+  onShow(() => {
+    // #ifdef APP-ANDROID
+    onActivityVisible()
+    // #endif
+    loadConfig()
+    loadEnv()
+  })
+
+  onHide(() => {
+    // #ifdef APP-ANDROID
+    onActivityInvisible()
+    // #endif
+  })
+
+  onUnload(() => {
+    cancelBinding()
+  })
+</script>
+
+<style>
+  .page {
+    flex: 1;
+    background-color: #F5F6F8;
+  }
+
+  .content {
+    flex: 1;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .section {
+    margin-top: 16px;
+  }
+
+  .section-title {
+    font-size: 13px;
+    color: #9AA0A6;
+    margin-left: 4px;
+    margin-bottom: 8px;
+  }
+
+  .section-tip {
+    font-size: 12px;
+    color: #9AA0A6;
+    margin-top: 8px;
+    margin-left: 4px;
+  }
+
+  .card {
+    background-color: #FFFFFF;
+    border-radius: 14px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+
+  .row-label {
+    font-size: 15px;
+    color: #1A1A1A;
+  }
+
+  .row-value {
+    font-size: 15px;
+    color: #6B7280;
+  }
+
+  .row-divider {
+    height: 1px;
+    background-color: #F0F0F0;
+  }
+
+  .mono {
+    font-family: monospace;
+    font-size: 13px;
+  }
+
+  .value-ok {
+    color: #34C759;
+  }
+
+  .value-warn {
+    color: #FF9500;
+  }
+
+  .value-danger {
+    color: #FF3B30;
+  }
+
+  .link {
+    color: #3478F6;
+  }
+
+  .actions {
+    flex-direction: row;
+    padding-top: 12px;
+    padding-bottom: 16px;
+  }
+
+  .btn {
+    flex: 1;
+    height: 44px;
+    border-radius: 10px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .btn-secondary {
+    background-color: #F2F3F5;
+  }
+
+  .btn-danger {
+    background-color: #FFEBEA;
+    margin-left: 10px;
+  }
+
+  .btn-warning {
+    background-color: #FFF4E5;
+  }
+
+  .btn-disabled {
+    background-color: #F2F3F5;
+  }
+
+  .btn-text {
+    font-size: 15px;
+  }
+
+  .btn-text-secondary {
+    color: #1A1A1A;
+  }
+
+  .btn-text-danger {
+    color: #FF3B30;
+  }
+
+  .btn-text-warning {
+    color: #B25E09;
+  }
+
+  .btn-text-disabled {
+    color: #C7C7CC;
+  }
+
+  .bottom-space {
+    height: 40px;
+  }
+
+  .overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.55);
+    align-items: center;
+    justify-content: center;
+  }
+
+  .overlay-card {
+    width: 280px;
+    background-color: #FFFFFF;
+    border-radius: 16px;
+    padding: 24px;
+    align-items: center;
+  }
+
+  .overlay-title {
+    font-size: 16px;
+    font-weight: bold;
+    color: #1A1A1A;
+    text-align: center;
+  }
+
+  .overlay-sub {
+    font-size: 13px;
+    color: #9AA0A6;
+    margin-top: 10px;
+  }
+
+  .overlay-btn {
+    width: 100%;
+    height: 42px;
+    border-radius: 10px;
+    background-color: #F2F3F5;
+    align-items: center;
+    justify-content: center;
+    margin-top: 18px;
+  }
+
+  .overlay-btn-text {
+    font-size: 15px;
+    color: #1A1A1A;
+  }
+</style>

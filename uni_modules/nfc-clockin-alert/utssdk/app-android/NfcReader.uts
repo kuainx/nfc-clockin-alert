@@ -1,0 +1,210 @@
+/**
+ * NFC 读取（Android）
+ * 采用 enableReaderMode：无系统弹窗、时序稳定。
+ */
+
+import Intent from 'android.content.Intent';
+import NfcAdapter from 'android.nfc.NfcAdapter';
+import Tag from 'android.nfc.Tag';
+import Bundle from 'android.os.Bundle';
+import Settings from 'android.provider.Settings';
+import Context from 'android.content.Context';
+import { ScanOptions } from '../interface.uts';
+
+let adapter : NfcAdapter | null = null;
+let readerCallback : NfcAdapter.ReaderCallback | null = null;
+let currentOptions : ScanOptions | null = null;
+let timeoutTimer : number = -1;
+let scanning : boolean = false;
+let pendingOnce : boolean = true;
+
+function appContext() : Context {
+  return UTSAndroid.getAppContext()!;
+}
+
+function getAdapter() : NfcAdapter | null {
+  if (adapter == null) {
+    adapter = NfcAdapter.getDefaultAdapter(appContext());
+  }
+  return adapter;
+}
+
+/** 字节数组转大写十六进制字符串 */
+function bytesToHex(bytes : ByteArray) : string {
+  let out : string = "";
+  for (let i : Int = 0; i < bytes.size; i++) {
+    let value : Int = bytes[i].toInt();
+    value = value & 0xFF;
+    let hex : string = value.toString(16).toUpperCase();
+    if (hex.length == 1) {
+      hex = "0" + hex;
+    }
+    out += hex;
+  }
+  return out;
+}
+
+/** NFC 标签回调实现 */
+class ReaderCallbackImpl implements NfcAdapter.ReaderCallback {
+  override onTagDiscovered(tag : Tag) : void {
+    handleTagDiscovered(tag);
+  }
+}
+
+function handleTagDiscovered(tag : Tag) : void {
+  const uid = bytesToHex(tag.getId());
+  const opts = currentOptions;
+  if (opts == null) {
+    return;
+  }
+  if (uid.length == 0) {
+    return;
+  }
+  if (pendingOnce) {
+    stopScan();
+  }
+  opts.onTag(uid);
+}
+
+export function isNfcSupported() : boolean {
+  return getAdapter() != null;
+}
+
+export function isNfcEnabled() : boolean {
+  const nfc = getAdapter();
+  if (nfc == null) {
+    return false;
+  }
+  return nfc.isEnabled();
+}
+
+export function requestEnableNfc() : void {
+  const activity = UTSAndroid.getUniActivity();
+  if (activity == null) {
+    return;
+  }
+  try {
+    const intent = new Intent(Settings.ACTION_NFC_SETTINGS);
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    activity.startActivity(intent);
+  } catch (e) {
+    const intent = new Intent(Settings.ACTION_WIRELESS_SETTINGS);
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    activity.startActivity(intent);
+  }
+}
+
+function reportError(code : number, message : string) : void {
+  const options = currentOptions;
+  if (options != null) {
+    const handler = options.onError;
+    if (handler != null) {
+      handler(code, message);
+    }
+  }
+}
+
+function clearTimer() : void {
+  if (timeoutTimer != -1) {
+    clearTimeout(timeoutTimer);
+    timeoutTimer = -1;
+  }
+}
+
+function enableReaderMode() : void {
+  const activity = UTSAndroid.getUniActivity();
+  if (activity == null) {
+    reportError(1001, "activity is null");
+    return;
+  }
+  const nfc = getAdapter();
+  if (nfc == null) {
+    reportError(1002, "device does not support NFC");
+    return;
+  }
+  if (!nfc.isEnabled()) {
+    reportError(1003, "NFC is disabled");
+    return;
+  }
+  if (readerCallback == null) {
+    readerCallback = new ReaderCallbackImpl();
+  }
+  let flags : Int = NfcAdapter.FLAG_READER_NFC_A;
+  flags = flags | NfcAdapter.FLAG_READER_NFC_B;
+  flags = flags | NfcAdapter.FLAG_READER_NFC_F;
+  flags = flags | NfcAdapter.FLAG_READER_NFC_V;
+  flags = flags | NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK;
+  const extras = new Bundle();
+  nfc.enableReaderMode(activity, readerCallback!, flags, extras);
+  scanning = true;
+}
+
+function disableReaderMode() : void {
+  const activity = UTSAndroid.getUniActivity();
+  const nfc = getAdapter();
+  if (activity != null && nfc != null) {
+    try {
+      nfc.disableReaderMode(activity);
+    } catch (e) {
+      console.log("disableReaderMode failed");
+    }
+  }
+  scanning = false;
+}
+
+export function startScan(options : ScanOptions) : void {
+  stopScan();
+
+  const nfc = getAdapter();
+  if (nfc == null) {
+    const handler = options.onError;
+    if (handler != null) {
+      handler(1002, "device does not support NFC");
+    }
+    return;
+  }
+  if (!nfc.isEnabled()) {
+    const handler = options.onError;
+    if (handler != null) {
+      handler(1003, "NFC is disabled");
+    }
+    return;
+  }
+
+  currentOptions = options;
+  pendingOnce = options.once ?? true;
+
+  enableReaderMode();
+
+  const timeout : number = options.timeoutMs ?? 60000;
+  if (timeout > 0) {
+    timeoutTimer = setTimeout(() => {
+      const opts = currentOptions;
+      stopScan();
+      if (opts != null) {
+        const handler = opts.onTimeout;
+        if (handler != null) {
+          handler();
+        }
+      }
+    }, Math.round(timeout).toInt());
+  }
+}
+
+export function stopScan() : void {
+  clearTimer();
+  disableReaderMode();
+  currentOptions = null;
+}
+
+export function resumeReaderIfNeeded() : void {
+  if (currentOptions != null && !scanning) {
+    enableReaderMode();
+  }
+}
+
+export function pauseReader() : void {
+  if (scanning) {
+    disableReaderMode();
+  }
+}

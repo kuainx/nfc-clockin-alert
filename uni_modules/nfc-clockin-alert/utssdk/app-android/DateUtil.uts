@@ -1,0 +1,86 @@
+/**
+ * 日期 / 时间工具（Android 平台实现）
+ */
+
+import Calendar from 'java.util.Calendar';
+
+const ONE_MINUTE_MS : number = 60 * 1000;
+
+function pad2(value : number) : string {
+  const s = value.toString();
+  return s.length == 1 ? "0" + s : s;
+}
+
+function calendarOf(timestamp : number) : Calendar {
+  const cal = Calendar.getInstance();
+  cal.setTimeInMillis(timestamp.toLong());
+  return cal;
+}
+
+export function formatDateOf(timestamp : number) : string {
+  const cal = calendarOf(timestamp);
+  return "" + cal.get(Calendar.YEAR) + "-" + pad2(cal.get(Calendar.MONTH) + 1) + "-" + pad2(cal.get(Calendar.DAY_OF_MONTH));
+}
+
+export function todayString() : string {
+  return formatDateOf(Date.now());
+}
+
+export function isWorkday(timestamp : number) : boolean {
+  const day = calendarOf(timestamp).get(Calendar.DAY_OF_WEEK);
+  return day >= Calendar.MONDAY && day <= Calendar.FRIDAY;
+}
+
+export function startOfDay(timestamp : number) : number {
+  const cal = calendarOf(timestamp);
+  cal.set(Calendar.HOUR_OF_DAY, 0);
+  cal.set(Calendar.MINUTE, 0);
+  cal.set(Calendar.SECOND, 0);
+  cal.set(Calendar.MILLISECOND, 0);
+  return cal.getTimeInMillis();
+}
+
+export function atTime(timestamp : number, hour : number, minute : number) : number {
+  const cal = calendarOf(startOfDay(timestamp));
+  cal.set(Calendar.HOUR_OF_DAY, hour.toInt());
+  cal.set(Calendar.MINUTE, minute.toInt());
+  cal.set(Calendar.SECOND, 0);
+  cal.set(Calendar.MILLISECOND, 0);
+  return cal.getTimeInMillis();
+}
+
+export function nextDayStart(timestamp : number) : number {
+  const cal = calendarOf(startOfDay(timestamp));
+  cal.add(Calendar.DAY_OF_MONTH, 1);
+  return cal.getTimeInMillis();
+}
+
+export function nextWorkTime(now : number, hour : number, minute : number) : number {
+  let day : number = startOfDay(now);
+  for (let i = 0; i < 8; i++) {
+    if (i > 0) {
+      day = nextDayStart(day);
+    }
+    if (!isWorkday(day)) {
+      continue;
+    }
+    const target = atTime(day, hour, minute);
+    if (target > now) {
+      return target;
+    }
+  }
+  return 0;
+}
+
+export function workTimeOf(timestamp : number, hour : number, minute : number) : number {
+  return atTime(timestamp, hour, minute);
+}
+
+export function addMinutes(timestamp : number, minutes : number) : number {
+  return timestamp + minutes * ONE_MINUTE_MS;
+}
+
+export function formatTime(timestamp : number) : string {
+  const cal = calendarOf(timestamp);
+  return pad2(cal.get(Calendar.HOUR_OF_DAY)) + ":" + pad2(cal.get(Calendar.MINUTE));
+}

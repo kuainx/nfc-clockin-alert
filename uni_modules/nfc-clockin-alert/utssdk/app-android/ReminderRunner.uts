@@ -1,0 +1,84 @@
+/**
+ * 提醒执行流程（被 AlarmReceiver / BootReceiver 复用）
+ * 运行在广播接收器上下文，uni 运行环境可能未初始化，禁止调用 uni API。
+ */
+
+import {
+  readConfig,
+  readTodayState,
+  readRecordStatus,
+  updateTodayStatus,
+  increaseRingCount
+} from './Store.uts';
+import { showReminder, vibrate, cancelReminder } from './Notifier.uts';
+import { reschedule, scheduleAt } from './Scheduler.uts';
+import { todayString, formatTime, nextWorkTime, addMinutes, isWorkday } from './DateUtil.uts';
+
+/** 执行一次提醒：发通知 + 震动 + 推进状态 + 排下一次。返回是否真正发出提醒。 */
+export function runReminder() : boolean {
+  const now = Date.now();
+  const today = todayString();
+  const config = readConfig();
+
+  // 今日已有记录：不再提醒，直接排下一次
+  const recordStatus = readRecordStatus(today);
+  if (recordStatus != null) {
+    cancelReminder();
+    reschedule();
+    return false;
+  }
+
+  if (!config.enabled) {
+    reschedule();
+    return false;
+  }
+
+  // 非工作日不提醒
+  if (!isWorkday(now)) {
+    reschedule();
+    return false;
+  }
+
+  const state = readTodayState();
+
+  // 延迟中且未到期：不提醒，排到延迟结束时间
+  if (state.status == "deferred" && state.deferUntil > now) {
+    reschedule();
+    return false;
+  }
+
+  // 延迟已到期 → 回到提醒中
+  if (state.status == "deferred") {
+    updateTodayStatus("ringing", 0);
+  }
+
+  const bound : boolean = config.cardId.length > 0;
+  const title : string = "打卡提醒";
+  let content : string = "";
+  if (!bound) {
+    content = "尚未录入 NFC 卡，请先到设置中录入卡片完成打卡";
+  } else {
+    content = "请将 NFC 卡贴近手机完成打卡（" + formatTime(now) + "）";
+  }
+
+  showReminder(title, content, bound);
+  vibrate(300);
+
+  updateTodayStatus("ringing", 0);
+  increaseRingCount();
+
+  // 排下一次：当前时间 + 间隔；若已跨出工作日，交给工作日计算
+  const nextAt = addMinutes(now, config.intervalMinute);
+  const nextWork = nextWorkTime(now, config.startHour, config.startMinute);
+  let target = nextAt;
+  if (nextWork > 0 && nextWork < nextAt) {
+    target = nextWork;
+  }
+  scheduleAt(target);
+  return true;
+}
+
+/** 开机 / 应用更新 / 应用启动时调用 */
+export function restoreSchedule() : void {
+  reschedule();
+}

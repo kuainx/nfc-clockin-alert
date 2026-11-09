@@ -1,0 +1,250 @@
+﻿/**
+ * 鎻掍欢灞傜粺涓€鏁版嵁瀛樺偍锛圫haredPreferences锛? * 蹇呴』鐙珛浜?uni 瀛樺偍锛氬紑鏈哄箍鎾?/ 闂归挓骞挎挱鍙兘鍦?uni 杩愯鐜鏈垵濮嬪寲鏃舵墽琛屻€? */
+
+import Context from 'android.content.Context';
+import SharedPreferences from 'android.content.SharedPreferences';
+import { ClockConfig, DayRecord, RecordStatus, TodayState, CheckinStatus } from '../interface.uts';
+import { todayString } from './DateUtil.uts';
+
+const PREF_NAME : string = "nfc_clockin_alert_prefs";
+const KEY_CONFIG : string = "config";
+const KEY_RECORDS : string = "records";
+const KEY_NEXT_ALARM : string = "next_alarm";
+const KEY_STATE_STATUS : string = "state_status";
+const KEY_STATE_DATE : string = "state_date";
+const KEY_STATE_DEFER : string = "state_defer_until";
+const KEY_STATE_RING : string = "state_ring_count";
+
+export const DEFAULT_CARD_ID : string = "";
+export const DEFAULT_START_HOUR : Int = 8;
+export const DEFAULT_START_MINUTE : Int = 30;
+export const DEFAULT_INTERVAL : Int = 1;
+
+const ZERO_LONG : Long = 0;
+
+function prefs() : SharedPreferences {
+  const ctx = UTSAndroid.getAppContext();
+  return ctx!.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+}
+
+function toInt(value : number) : Int {
+  return Math.round(value).toInt();
+}
+
+function toLong(value : number) : Long {
+  return Math.round(value).toLong();
+}
+
+/* -------------------------------- 閰嶇疆 -------------------------------- */
+
+export function defaultConfig() : ClockConfig {
+  const config : ClockConfig = {
+    cardId: DEFAULT_CARD_ID,
+    startHour: DEFAULT_START_HOUR,
+    startMinute: DEFAULT_START_MINUTE,
+    intervalMinute: DEFAULT_INTERVAL,
+    enabled: true
+  };
+  return config;
+}
+
+export function readConfig() : ClockConfig {
+  const p = prefs();
+  if (!p.contains("config_card_id")) {
+    return defaultConfig();
+  }
+  const config : ClockConfig = {
+    cardId: p.getString("config_card_id", DEFAULT_CARD_ID) ?? DEFAULT_CARD_ID,
+    startHour: p.getInt("config_start_hour", DEFAULT_START_HOUR),
+    startMinute: p.getInt("config_start_minute", DEFAULT_START_MINUTE),
+    intervalMinute: p.getInt("config_interval", DEFAULT_INTERVAL),
+    enabled: p.getBoolean("config_enabled", true)
+  };
+  if (config.intervalMinute <= 0) {
+    config.intervalMinute = DEFAULT_INTERVAL;
+  }
+  return config;
+}
+
+export function writeConfig(config : ClockConfig) : void {
+  const editor = prefs().edit();
+  editor.putString("config_card_id", config.cardId);
+  editor.putInt("config_start_hour", toInt(config.startHour));
+  editor.putInt("config_start_minute", toInt(config.startMinute));
+  editor.putInt("config_interval", toInt(config.intervalMinute));
+  editor.putBoolean("config_enabled", config.enabled);
+  editor.apply();
+}
+
+/* -------------------------------- 璁板綍 -------------------------------- */
+
+/** 璁板綍瀛樺偍鏍煎紡锛氭棩鏈焲鐘舵€?;鏃ユ湡|鐘舵€?;... 锛堥伩鍏嶄娇鐢?JSON 瑙ｆ瀽锛屼簯绔紪璇戞洿绋筹級 */
+function parseRecords(raw : string) : Array<DayRecord> {
+  const result : Array<DayRecord> = [];
+  if (raw.length == 0) {
+    return result;
+  }
+  const items = raw.split(";;");
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const sep = item.indexOf("|");
+    if (sep <= 0) {
+      continue;
+    }
+    const date = item.substring(0, sep);
+    const status = item.substring(sep + 1);
+    if (status == "checked" || status == "skipped") {
+      const record : DayRecord = {
+        date: date,
+        status: status as RecordStatus
+      };
+      result.push(record);
+    }
+  }
+  return result;
+}
+
+function serializeRecords(records : Array<DayRecord>) : string {
+  let out = "";
+  for (let i = 0; i < records.length; i++) {
+    if (out.length > 0) {
+      out += ";;";
+    }
+    out += records[i].date + "|" + records[i].status;
+  }
+  return out;
+}
+
+export function readRecords() : Array<DayRecord> {
+  return parseRecords(prefs().getString("records", "") ?? "");
+}
+
+export function readRecordStatus(date : string) : RecordStatus | null {
+  const records = readRecords();
+  for (let i = 0; i < records.length; i++) {
+    if (records[i].date == date) {
+      return records[i].status;
+    }
+  }
+  return null;
+}
+
+export function writeRecord(date : string, status : RecordStatus) : void {
+  const records = readRecords();
+  let found = false;
+  let out = "";
+  for (let i = 0; i < records.length; i++) {
+    const item = records[i];
+    let itemStatus : string = item.status;
+    if (item.date == date) {
+      itemStatus = status;
+      found = true;
+    }
+    if (out.length > 0) {
+      out += ";;";
+    }
+    out += item.date + "|" + itemStatus;
+  }
+  if (!found) {
+    if (out.length > 0) {
+      out += ";;";
+    }
+    out += date + "|" + status;
+  }
+  prefs().edit().putString("records", out).apply();
+}
+
+export function countChecked() : number {
+  const records = readRecords();
+  let count = 0;
+  for (let i = 0; i < records.length; i++) {
+    if (records[i].status == "checked") {
+      count++;
+    }
+  }
+  return count;
+}
+
+/* ------------------------------ 褰撴棩鐘舵€?------------------------------ */
+
+function readTodayStateRaw() : TodayState {
+  const p = prefs();
+  const date = p.getString(KEY_STATE_DATE, "") ?? "";
+  const today = todayString();
+  if (date != today) {
+    const state : TodayState = {
+      date: today,
+      status: "idle",
+      deferUntil: 0,
+      nextAlarmAt: getNextAlarmAt(),
+      ringCount: 0
+    };
+    saveTodayState(state);
+    return state;
+  }
+  const statusText = p.getString(KEY_STATE_STATUS, "idle") ?? "idle";
+  const state : TodayState = {
+    date: today,
+    status: statusText as CheckinStatus,
+    deferUntil: p.getLong(KEY_STATE_DEFER, ZERO_LONG),
+    nextAlarmAt: getNextAlarmAt(),
+    ringCount: p.getInt(KEY_STATE_RING, 0)
+  };
+  return state;
+}
+
+export function readTodayState() : TodayState {
+  return readTodayStateRaw();
+}
+
+export function saveTodayState(state : TodayState) : void {
+  const editor = prefs().edit();
+  editor.putString(KEY_STATE_DATE, state.date);
+  editor.putString(KEY_STATE_STATUS, state.status);
+  editor.putLong(KEY_STATE_DEFER, toLong(state.deferUntil));
+  editor.putInt(KEY_STATE_RING, toInt(state.ringCount));
+  editor.putLong(KEY_NEXT_ALARM, toLong(state.nextAlarmAt));
+  editor.apply();
+}
+
+export function updateTodayStatus(status : CheckinStatus, deferUntil : number) : TodayState {
+  const state = readTodayState();
+  state.status = status;
+  state.deferUntil = deferUntil;
+  saveTodayState(state);
+  return state;
+}
+
+export function increaseRingCount() : TodayState {
+  const state = readTodayState();
+  state.ringCount = state.ringCount + 1;
+  saveTodayState(state);
+  return state;
+}
+
+export function resetTodayStateForDate(date : string) : void {
+  const state : TodayState = {
+    date: date,
+    status: "idle",
+    deferUntil: 0,
+    nextAlarmAt: 0,
+    ringCount: 0
+  };
+  saveTodayState(state);
+}
+
+export function getNextAlarmAt() : number {
+  return prefs().getLong(KEY_NEXT_ALARM, ZERO_LONG);
+}
+
+export function setNextAlarmAt(timestamp : number) : void {
+  const state = readTodayState();
+  state.nextAlarmAt = timestamp;
+  saveTodayState(state);
+}
+
+export function clearNextAlarmAt() : void {
+  const state = readTodayState();
+  state.nextAlarmAt = 0;
+  saveTodayState(state);
+}

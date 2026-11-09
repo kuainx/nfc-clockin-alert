@@ -1,0 +1,105 @@
+/**
+ * NFC 打卡闹钟插件 · 对外接口声明
+ * 页面侧只需从 '@/uni_modules/nfc-clockin-alert' 引入，不要引入插件内部文件。
+ */
+
+/** 当日打卡状态 */
+export type CheckinStatus = 'idle' | 'ringing' | 'deferred' | 'checked' | 'skipped'
+
+/** 单日历史记录状态 */
+export type RecordStatus = 'checked' | 'skipped'
+
+/** 打卡配置 */
+export type ClockConfig = {
+	/** 已绑定 NFC 卡 UID（大写十六进制），空字符串表示未绑定 */
+	cardId : string
+	/** 开始提示小时 0-23 */
+	startHour : number
+	/** 开始提示分钟 0-59 */
+	startMinute : number
+	/** 重复提醒间隔（分钟） */
+	intervalMinute : number
+	/** 是否启用提醒 */
+	enabled : boolean
+}
+
+/** 单日记录 */
+export type DayRecord = {
+	/** yyyy-MM-dd */
+	date : string
+	status : RecordStatus
+}
+
+/** 当日运行状态 */
+export type TodayState = {
+	date : string
+	status : CheckinStatus
+	/** 延迟到期时间戳，0 表示无延迟 */
+	deferUntil : number
+	/** 下次提醒时间戳，0 表示无 */
+	nextAlarmAt : number
+	/** 今日已提醒次数 */
+	ringCount : number
+}
+
+/** NFC 扫描参数 */
+export type ScanOptions = {
+	/** 读到卡片后是否自动停止扫描，默认 true */
+	once ?: boolean | null
+	/** 超时时间（毫秒），<=0 表示不超时，默认 60000 */
+	timeoutMs ?: number | null
+	/** 扫描期间 Activity 可见性变化时是否自动恢复扫描，默认 true */
+	autoResume ?: boolean | null
+	onTag : (uid : string) => void
+	onError ?: ((code : number, message : string) => void) | null
+	onTimeout ?: (() => void) | null
+}
+
+/** 环境检查结果 */
+export type EnvCheckResult = {
+	nfcSupported : boolean
+	nfcEnabled : boolean
+	notificationEnabled : boolean
+	ignoringBatteryOptimizations : boolean
+}
+
+/* ------------------------------ 配置 ------------------------------ */
+
+export type GetConfig = () => ClockConfig
+export type SaveConfig = (config : ClockConfig) => void
+
+/* ------------------------------ 记录 ------------------------------ */
+
+export type GetRecords = () => DayRecord[]
+export type GetCheckedCount = () => number
+export type GetTodayState = () => TodayState
+export type MarkChecked = (date : string) => boolean
+export type MarkSkipped = (date : string) => boolean
+export type Defer = (minutes : number) => void
+
+/* ------------------------------ NFC ------------------------------ */
+
+export type IsNfcSupported = () => boolean
+export type IsNfcEnabled = () => boolean
+export type RequestEnableNfc = () => void
+export type StartScan = (options : ScanOptions) => void
+export type StopScan = () => void
+
+/* ------------------------------ 调度 ------------------------------ */
+
+export type Reschedule = () => void
+export type CancelAll = () => void
+
+/* ------------------------------ 权限与环境 ------------------------------ */
+
+export type CheckEnv = () => EnvCheckResult
+export type RequestNotificationPermission = (callback ?: ((granted : boolean) => void) | null) => void
+export type IsNotificationEnabled = () => boolean
+export type IsIgnoringBatteryOptimizations = () => boolean
+export type RequestIgnoreBatteryOptimizations = () => void
+export type OpenAppSettings = () => void
+
+/* ------------------------------ 工具 ------------------------------ */
+
+export type FormatDate = (timestamp : number) => string
+export type Vibrate = (milliseconds : number) => void

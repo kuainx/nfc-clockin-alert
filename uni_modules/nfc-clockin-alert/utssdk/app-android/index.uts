@@ -1,0 +1,220 @@
+/**
+ * NFC 打卡闹钟插件 · Android 实现入口
+ */
+
+import Context from 'android.content.Context';
+import Intent from 'android.content.Intent';
+import Uri from 'android.net.Uri';
+import PowerManager from 'android.os.PowerManager';
+import Build from 'android.os.Build';
+import Settings from 'android.provider.Settings';
+import {
+  ClockConfig,
+  DayRecord,
+  TodayState,
+  ScanOptions,
+  EnvCheckResult,
+  RecordStatus
+} from '../interface.uts';
+import {
+  readConfig,
+  writeConfig,
+  readRecords,
+  countChecked,
+  readTodayState,
+  writeRecord,
+  readRecordStatus,
+  updateTodayStatus
+} from './Store.uts';
+import {
+  isNfcSupported,
+  isNfcEnabled,
+  requestEnableNfc,
+  startScan,
+  stopScan,
+  resumeReaderIfNeeded,
+  pauseReader
+} from './NfcReader.uts';
+import { reschedule, cancelAll } from './Scheduler.uts';
+import { ensureChannel, cancelReminder, vibrate, isNotificationEnabled } from './Notifier.uts';
+import { todayString, addMinutes } from './DateUtil.uts';
+
+// 显式导出广播接收器，防止被编译优化（tree-shaking）移除
+export { AlarmReceiver, DeferActionReceiver, BootReceiver } from './Receivers.uts';
+
+/* ------------------------------ 配置 ------------------------------ */
+
+export function getConfig() : ClockConfig {
+  return readConfig();
+}
+
+export function saveConfig(config : ClockConfig) : void {
+  writeConfig(config);
+  reschedule();
+}
+
+/* ------------------------------ 记录 ------------------------------ */
+
+export function getRecords() : Array<DayRecord> {
+  return readRecords();
+}
+
+export function getCheckedCount() : number {
+  return countChecked();
+}
+
+export function getTodayState() : TodayState {
+  return readTodayState();
+}
+
+export function markChecked(date : string) : boolean {
+  const target = date.length > 0 ? date : todayString();
+  if (readRecordStatus(target) != null) {
+    return false;
+  }
+  writeRecord(target, "checked" as RecordStatus);
+  updateTodayStatus("checked", 0);
+  cancelReminder();
+  reschedule();
+  return true;
+}
+
+export function markSkipped(date : string) : boolean {
+  const target = date.length > 0 ? date : todayString();
+  if (readRecordStatus(target) != null) {
+    return false;
+  }
+  writeRecord(target, "skipped" as RecordStatus);
+  updateTodayStatus("skipped", 0);
+  cancelReminder();
+  reschedule();
+  return true;
+}
+
+export function defer(minutes : number) : void {
+  const count = minutes > 0 ? minutes : 5;
+  const deferUntil = addMinutes(Date.now(), count);
+  updateTodayStatus("deferred", deferUntil);
+  cancelReminder();
+  reschedule();
+}
+
+/* ------------------------------ NFC ------------------------------ */
+
+export function isNfcSupportedCheck() : boolean {
+  return isNfcSupported();
+}
+
+export function isNfcEnabledCheck() : boolean {
+  return isNfcEnabled();
+}
+
+export function openNfcSettings() : void {
+  requestEnableNfc();
+}
+
+export function beginScan(options : ScanOptions) : void {
+  startScan(options);
+}
+
+export function endScan() : void {
+  stopScan();
+}
+
+export function onActivityVisible() : void {
+  resumeReaderIfNeeded();
+}
+
+export function onActivityInvisible() : void {
+  pauseReader();
+}
+
+/* ------------------------------ 调度 ------------------------------ */
+
+export function rescheduleAll() : void {
+  reschedule();
+}
+
+export function cancelAllAlarms() : void {
+  cancelAll();
+}
+
+/* ------------------------------ 权限与环境 ------------------------------ */
+
+export function checkEnv() : EnvCheckResult {
+  const result : EnvCheckResult = {
+    nfcSupported: isNfcSupported(),
+    nfcEnabled: isNfcEnabled(),
+    notificationEnabled: isNotificationEnabled(),
+    ignoringBatteryOptimizations: isIgnoringBatteryOptimizations()
+  };
+  return result;
+}
+
+export function requestNotificationPermission(callback : ((granted : boolean) => void) | null) : void {
+  ensureChannel();
+  const activity = UTSAndroid.getUniActivity();
+  if (activity == null) {
+    if (callback != null) {
+      callback(false);
+    }
+    return;
+  }
+  if (Build.VERSION.SDK_INT < 33) {
+    if (callback != null) {
+      callback(true);
+    }
+    return;
+  }
+  const permission = "android.permission.POST_NOTIFICATIONS";
+  UTSAndroid.requestSystemPermission(activity, [permission], function (allRight : boolean, _ : Array<string>) {
+    reschedule();
+    if (callback != null) {
+      callback(allRight);
+    }
+  }, function (_ : boolean, _ : Array<string>) {
+    if (callback != null) {
+      callback(false);
+    }
+  });
+}
+
+export function notificationEnabled() : boolean {
+  return isNotificationEnabled();
+}
+
+export function isIgnoringBatteryOptimizations() : boolean {
+  const ctx = UTSAndroid.getAppContext()!;
+  const powerManager = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager;
+  return powerManager.isIgnoringBatteryOptimizations(ctx.getPackageName());
+}
+
+export function requestIgnoreBatteryOptimizations() : void {
+  if (isIgnoringBatteryOptimizations()) {
+    openAppSettings();
+    return;
+  }
+  const ctx = UTSAndroid.getAppContext()!;
+  try {
+    const intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+    intent.setData(Uri.parse("package:" + ctx.getPackageName()));
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    ctx.startActivity(intent);
+  } catch (e) {
+    openAppSettings();
+  }
+}
+
+export function openAppSettings() : void {
+  const ctx = UTSAndroid.getAppContext()!;
+  const intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+  intent.setData(Uri.parse("package:" + ctx.getPackageName()));
+  intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+  ctx.startActivity(intent);
+}
+
+/* ------------------------------ 工具 ------------------------------ */
+
+export function vibrateDevice(milliseconds : number) : void {
+  vibrate(milliseconds);
+}

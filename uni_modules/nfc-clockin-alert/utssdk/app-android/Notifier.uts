@@ -1,0 +1,101 @@
+/**
+ * 通知与震动
+ * 注意：通知渠道一旦创建，震动等属性不可再修改，channelId 需保持稳定。
+ */
+
+import Context from 'android.content.Context';
+import Intent from 'android.content.Intent';
+import PendingIntent from 'android.app.PendingIntent';
+import NotificationManager from 'android.app.NotificationManager';
+import NotificationChannel from 'android.app.NotificationChannel';
+import Notification from 'android.app.Notification';
+import NotificationBuilder from 'android.app.Notification.Builder';
+import Build from 'android.os.Build';
+import Vibrator from 'android.os.Vibrator';
+import VibrationEffect from 'android.os.VibrationEffect';
+import { DeferActionReceiver } from './Receivers.uts';
+
+export const CHANNEL_ID : string = "nfc_clockin_reminder_v1";
+export const NOTIFICATION_ID : Int = 20261;
+
+export const ACTION_DEFER : string = "io.dcloud.nfcclockin.ACTION_DEFER";
+
+function manager() : NotificationManager {
+  const ctx = UTSAndroid.getAppContext();
+  return ctx!.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager;
+}
+
+/** 创建通知渠道（可重复调用，已存在则忽略） */
+export function ensureChannel() : void {
+  if (Build.VERSION.SDK_INT < 26) {
+    return;
+  }
+  const channel = new NotificationChannel(CHANNEL_ID, "打卡提醒", NotificationManager.IMPORTANCE_HIGH);
+  channel.setDescription("到达设定时间后的打卡提醒");
+  channel.enableVibration(true);
+  channel.setShowBadge(true);
+  manager().createNotificationChannel(channel);
+}
+
+/**
+ * 发送提醒通知
+ * @param title 标题
+ * @param content 内容
+ * @param withActions 是否附带「延迟5分钟」快捷操作
+ */
+export function showReminder(title : string, content : string, withActions : boolean) : void {
+  ensureChannel();
+  const ctx = UTSAndroid.getAppContext()!;
+
+  const builder = new NotificationBuilder(ctx, CHANNEL_ID);
+  builder.setContentTitle(title);
+  builder.setContentText(content);
+  builder.setSmallIcon(ctx.getApplicationInfo().icon);
+  builder.setAutoCancel(true);
+  builder.setDefaults(Notification.DEFAULT_VIBRATE);
+
+  let pendingFlags : Int = PendingIntent.FLAG_UPDATE_CURRENT;
+  pendingFlags = pendingFlags | PendingIntent.FLAG_IMMUTABLE;
+
+  const launchIntent = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
+  if (launchIntent != null) {
+    let intentFlags : Int = Intent.FLAG_ACTIVITY_NEW_TASK;
+    intentFlags = intentFlags | Intent.FLAG_ACTIVITY_CLEAR_TOP;
+    launchIntent.setFlags(intentFlags);
+    const contentIntent = PendingIntent.getActivity(ctx, 3001, launchIntent, pendingFlags);
+    builder.setContentIntent(contentIntent);
+  }
+
+  if (withActions) {
+    const deferIntent = new Intent(ctx, DeferActionReceiver().javaClass);
+    deferIntent.setAction(ACTION_DEFER);
+    const deferPending = PendingIntent.getBroadcast(ctx, 3002, deferIntent, pendingFlags);
+    builder.addAction(android.R.drawable.ic_popup_reminder, "延迟5分钟", deferPending);
+  }
+
+  const notification = builder.build();
+  manager().notify(NOTIFICATION_ID, notification);
+}
+
+/** 取消当前提醒通知 */
+export function cancelReminder() : void {
+  manager().cancel(NOTIFICATION_ID);
+}
+
+/** 震动指定毫秒 */
+export function vibrate(milliseconds : number) : void {
+  const ctx = UTSAndroid.getAppContext();
+  const vibrator = ctx!.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator;
+  const ms : Long = Math.round(milliseconds).toLong();
+  if (Build.VERSION.SDK_INT >= 26) {
+    const effect = VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE);
+    vibrator.vibrate(effect);
+  } else {
+    vibrator.vibrate(ms);
+  }
+}
+
+/** 是否已授予通知权限 */
+export function isNotificationEnabled() : boolean {
+  return manager().areNotificationsEnabled();
+}

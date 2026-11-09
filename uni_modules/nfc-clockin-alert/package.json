@@ -1,0 +1,42 @@
+{
+  "id": "nfc-clockin-alert",
+  "displayName": "NFC 打卡闹钟",
+  "version": "1.0.0",
+  "description": "NFC 打卡闹钟所需的 NFC 读取、定时提醒、本地记录能力",
+  "keywords": ["nfc", "alarm", "notification", "uts"],
+  "dcloudext": {
+    "type": "uts",
+    "sale": {
+      "regular": {
+        "price": "0.00"
+      },
+      "sourcecode": {
+        "price": "0.00"
+      }
+    },
+    "contact": {
+      "qq": ""
+    },
+    "declaration": {
+      "ads": "无",
+      "data": "无",
+      "permissions": "无"
+    }
+  },
+  "uni_modules": {
+    "dependencies": [],
+    "encrypt": [],
+    "platforms": {
+      "cloud": {
+        "tcb": "y",
+        "aliyun": "y"
+      },
+      "client": {
+        "App": {
+          "app-vue": "y",
+          "app-nvue": "y"
+        }
+      }
+    }
+  }
+}
