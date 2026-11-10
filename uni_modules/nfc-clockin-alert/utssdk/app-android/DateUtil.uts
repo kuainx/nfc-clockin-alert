@@ -84,3 +84,78 @@ export function formatTime(timestamp : number) : string {
   const cal = calendarOf(timestamp);
   return pad2(cal.get(Calendar.HOUR_OF_DAY)) + ":" + pad2(cal.get(Calendar.MINUTE));
 }
+
+/* ------------------------- 额外打卡日相关工具 ------------------------- */
+
+/** 将 yyyy-MM-dd 解析为当天 0 点时间戳，非法返回 0 */
+export function parseDateString(date : string) : number {
+  const parts = date.split("-");
+  if (parts.length != 3) {
+    return 0;
+  }
+  const year = parseInt(parts[0]);
+  const month = parseInt(parts[1]);
+  const day = parseInt(parts[2]);
+  if (isNaN(year) || isNaN(month) || isNaN(day)) {
+    return 0;
+  }
+  const cal = Calendar.getInstance();
+  cal.set(Calendar.YEAR, year.toInt());
+  cal.set(Calendar.MONTH, (month - 1).toInt());
+  cal.set(Calendar.DAY_OF_MONTH, day.toInt());
+  cal.set(Calendar.HOUR_OF_DAY, 0);
+  cal.set(Calendar.MINUTE, 0);
+  cal.set(Calendar.SECOND, 0);
+  cal.set(Calendar.MILLISECOND, 0);
+  return cal.getTimeInMillis();
+}
+
+/** 日期排序键：yyyyMMdd，便于比较先后 */
+export function dateOrderKey(date : string) : number {
+  const parts = date.split("-");
+  if (parts.length != 3) {
+    return 0;
+  }
+  const year = parseInt(parts[0]);
+  const month = parseInt(parts[1]);
+  const day = parseInt(parts[2]);
+  if (isNaN(year) || isNaN(month) || isNaN(day)) {
+    return 0;
+  }
+  return year * 10000 + month * 100 + day;
+}
+
+function containsDate(dates : Array<string>, date : string) : boolean {
+  for (let i = 0; i < dates.length; i++) {
+    if (dates[i] == date) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 是否为打卡日：工作日，或用户指定的额外打卡日（休息日） */
+export function isCheckinDay(timestamp : number, extraDates : Array<string>) : boolean {
+  if (isWorkday(timestamp)) {
+    return true;
+  }
+  return containsDate(extraDates, formatDateOf(timestamp));
+}
+
+/** 从 now 起查找下一次打卡日提醒时间（工作日或额外打卡日），无则返回 0 */
+export function nextCheckinTime(now : number, hour : number, minute : number, extraDates : Array<string>) : number {
+  let day : number = startOfDay(now);
+  for (let i = 0; i < 14; i++) {
+    if (i > 0) {
+      day = nextDayStart(day);
+    }
+    if (!isCheckinDay(day, extraDates)) {
+      continue;
+    }
+    const target = atTime(day, hour, minute);
+    if (target > now) {
+      return target;
+    }
+  }
+  return 0;
+}

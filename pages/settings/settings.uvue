@@ -1,6 +1,23 @@
 <template>
   <view class="page">
     <scroll-view class="content" direction="vertical">
+      <!-- 今日不打卡 -->
+      <view class="section">
+        <text class="section-title">今日操作</text>
+        <view class="card">
+          <view class="row">
+            <text class="row-label">今日状态</text>
+            <text :class="['row-value', todayStatusClass]">{{ todayStatusText }}</text>
+          </view>
+          <view class="row-divider"></view>
+          <view class="actions">
+            <button :class="['btn', skipDisabled ? 'btn-disabled' : 'btn-warning']"
+              :hover-class="skipDisabled ? 'btn-hover-none' : 'btn-warning-hover'" :disabled="skipDisabled"
+              @tap="onSkipToday">今日不打卡</button>
+          </view>
+        </view>
+      </view>
+
       <!-- NFC 卡片 -->
       <view class="section">
         <text class="section-title">NFC 卡片</text>
@@ -15,12 +32,9 @@
           </view>
           <view class="row-divider"></view>
           <view class="actions">
-            <view class="btn btn-secondary" @tap="startBinding">
-              <text class="btn-text btn-text-secondary">{{ hasCard ? '重新录入' : '录入卡片' }}</text>
-            </view>
-            <view v-if="hasCard" class="btn btn-danger" @tap="unbind">
-              <text class="btn-text btn-text-danger">解除绑定</text>
-            </view>
+            <button class="btn btn-secondary" hover-class="btn-secondary-hover"
+              @tap="startBinding">{{ hasCard ? '重新录入' : '录入卡片' }}</button>
+            <button v-if="hasCard" class="btn btn-danger" hover-class="btn-danger-hover" @tap="unbind">解除绑定</button>
           </view>
         </view>
       </view>
@@ -36,29 +50,51 @@
             </view>
           </picker>
           <view class="row-divider"></view>
-          <picker mode="selector" :value="intervalIndex" :range="intervalLabels" @change="onIntervalChange">
-            <view class="row">
-              <text class="row-label">提示间隔时间</text>
-              <text class="row-value">{{ intervalMinute }} 分钟</text>
-            </view>
-          </picker>
+          <view class="row">
+            <text class="row-label">提示间隔时间</text>
+            <uni-number-box v-model="intervalMinute" :min="1" :max="30" :step="1"
+              @change="onIntervalChange"></uni-number-box>
+          </view>
         </view>
       </view>
 
-      <!-- 今日不打卡 -->
+      <!-- 指定打卡日 -->
       <view class="section">
-        <text class="section-title">今日操作</text>
+        <text class="section-title">指定打卡日</text>
         <view class="card">
-          <view class="row">
-            <text class="row-label">今日状态</text>
-            <text :class="['row-value', todayStatusClass]">{{ todayStatusText }}</text>
-          </view>
+          <picker mode="selector" :range="extraOptionLabels" :value="extraOptionIndex" @change="onExtraDateChange">
+            <view class="row">
+              <text class="row-label">选择休息日</text>
+              <text
+                :class="['row-value', extraOptionLabels.length > 0 ? 'link' : 'value-warn']">{{ extraOptionLabels.length > 0 ? extraOptionLabels[extraOptionIndex] : '暂无可选休息日' }}</text>
+            </view>
+          </picker>
           <view class="row-divider"></view>
           <view class="actions">
-            <view :class="['btn', skipDisabled ? 'btn-disabled' : 'btn-warning']" @tap="onSkipToday">
-              <text :class="['btn-text', skipDisabled ? 'btn-text-disabled' : 'btn-text-warning']">今日不打卡</text>
-            </view>
+            <button class="btn btn-secondary" hover-class="btn-secondary-hover" @tap="onAddExtraDate">添加到打卡日</button>
           </view>
+        </view>
+
+        <view class="extra-collapse-wrap">
+          <uni-collapse :accordion="true">
+            <uni-collapse-item :title="'已指定打卡日（' + extraDateItems.length + '）'" title-wrap-class="extra-collapse-title"
+              title-class="extra-collapse-title-text" content-wrap-class="extra-collapse-content">
+              <view class="extra-panel">
+                <scroll-view class="extra-list" direction="vertical">
+                  <view v-for="item in extraDateItems" :key="item.date" class="extra-item">
+                    <view class="extra-item-left">
+                      <text class="extra-item-date">{{ item.date }}</text>
+                      <text class="extra-item-week">{{ item.week }}</text>
+                    </view>
+                    <view class="extra-item-del" hover-class="extra-item-del-hover" @tap="onRemoveExtraDate(item.date)">
+                      <text class="extra-item-del-text">删除</text>
+                    </view>
+                  </view>
+                  <text v-if="extraDateItems.length == 0" class="extra-empty">暂未指定，可手动添加周六 / 周日打卡</text>
+                </scroll-view>
+              </view>
+            </uni-collapse-item>
+          </uni-collapse>
         </view>
       </view>
 
@@ -89,16 +125,15 @@
       <view class="bottom-space"></view>
     </scroll-view>
 
-    <!-- 录入卡片遮罩 -->
-    <view v-if="binding" class="overlay">
+    <!-- 录入卡片弹层（内置 page-container 居中弹出） -->
+    <page-container :show="binding" position="center" overlay-style="background-color: rgba(0, 0, 0, 0.55);"
+      @afterleave="onBindingLeave">
       <view class="overlay-card">
         <text class="overlay-title">请将 NFC 卡贴近手机感应区</text>
         <text class="overlay-sub">{{ bindRemainText }}</text>
-        <view class="overlay-btn" @tap="cancelBinding">
-          <text class="overlay-btn-text">取消</text>
-        </view>
+        <button class="overlay-btn" hover-class="overlay-btn-hover" @tap="cancelBinding">取消</button>
       </view>
-    </view>
+    </page-container>
   </view>
 </template>
 
@@ -109,7 +144,8 @@
     isNfcSupportedCheck, isNfcEnabledCheck, openNfcSettings,
     beginScan, endScan, onActivityVisible, onActivityInvisible,
     requestNotificationPermission, notificationEnabled as isNotificationEnabled,
-    isIgnoringBatteryOptimizations, requestIgnoreBatteryOptimizations, openAppSettings
+    isIgnoringBatteryOptimizations, requestIgnoreBatteryOptimizations, openAppSettings,
+    getExtraDates, addExtraDate, removeExtraDate
   } from '@/uni_modules/nfc-clockin-alert'
   import type { ClockConfig, TodayState, ScanOptions } from '@/uni_modules/nfc-clockin-alert'
 
@@ -120,6 +156,14 @@
   const intervalMinute = ref(1)
   const enabled = ref(true)
 
+  const extraDates = ref<string[]>([])
+  const extraOptionIndex = ref(0)
+
+  type ExtraDateItem = {
+    date : string
+    week : string
+  }
+
   const notificationEnabled = ref(true)
   const batteryIgnored = ref(false)
   const nfcSupported = ref(true)
@@ -128,14 +172,6 @@
   const binding = ref(false)
   const bindRemain = ref(60)
   const todayState = ref<TodayState>({ date: '', status: 'idle', deferUntil: 0, nextAlarmAt: 0, ringCount: 0 } as TodayState)
-
-  const intervalLabels : string[] = (() => {
-    const list : string[] = []
-    for (let i = 1; i <= 30; i++) {
-      list.push(i + ' 分钟')
-    }
-    return list
-  })()
 
   let bindTimer : number = -1
 
@@ -147,13 +183,56 @@
     return pad2(startHour.value) + ':' + pad2(startMinute.value)
   })
 
-  const intervalIndex = computed(() => {
-    const idx = intervalMinute.value - 1
-    return idx < 0 ? 0 : (idx > 29 ? 29 : idx)
-  })
-
   const bindRemainText = computed(() => {
     return '倒计时 ' + bindRemain.value + ' 秒'
+  })
+
+  const extraDateItems = computed(() : ExtraDateItem[] => {
+    const list : ExtraDateItem[] = []
+    for (let i = 0; i < extraDates.value.length; i++) {
+      const date = extraDates.value[i]
+      list.push({ date: date, week: weekdayOf(date) } as ExtraDateItem)
+    }
+    return list
+  })
+
+  // 仅生成未来的休息日（周六 / 周日）作为可选项，并排除已添加的日期
+  const extraOptionDates = computed(() : string[] => {
+    const list : string[] = []
+    const now = new Date()
+    let cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    let count = 0
+    let offset = 0
+    while (count < 30 && offset < 400) {
+      const d = new Date(cursor)
+      const day = d.getDay()
+      if (day == 0 || day == 6) {
+        const date = formatDateOfDate(d)
+        let exists = false
+        for (let i = 0; i < extraDates.value.length; i++) {
+          if (extraDates.value[i] == date) {
+            exists = true
+            break
+          }
+        }
+        if (!exists) {
+          list.push(date)
+          count = count + 1
+        }
+      }
+      cursor = cursor + 24 * 60 * 60 * 1000
+      offset = offset + 1
+    }
+    return list
+  })
+
+  const extraOptionLabels = computed(() : string[] => {
+    const list : string[] = []
+    const dates = extraOptionDates.value
+    for (let i = 0; i < dates.length; i++) {
+      list.push(dates[i] + ' ' + weekdayOf(dates[i]))
+    }
+    return list
   })
 
   const todayStatusText = computed(() => {
@@ -180,6 +259,28 @@
 
   function pad2(v : number) : string {
     return v < 10 ? '0' + v : '' + v
+  }
+
+  function formatDateOfDate(d : Date) : string {
+    return '' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
+  }
+
+  function weekdayOf(date : string) : string {
+    const parts = date.split('-')
+    if (parts.length != 3) {
+      return ''
+    }
+    const year = parseInt(parts[0])
+    const month = parseInt(parts[1])
+    const day = parseInt(parts[2])
+    const d = new Date(year, month - 1, day)
+    return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
+  }
+
+  function loadExtraDates() : void {
+    // #ifdef APP-ANDROID
+    extraDates.value = getExtraDates()
+    // #endif
   }
 
   function loadConfig() : void {
@@ -229,11 +330,58 @@
     uni.showToast({ title: '已保存开始时间', icon: 'none' })
   }
 
-  function onIntervalChange(e : UniPickerChangeEvent) : void {
-    const index = e.detail.value as number
-    intervalMinute.value = index + 1
+  function onIntervalChange(value : number) : void {
+    intervalMinute.value = value
     persist()
     uni.showToast({ title: '已保存间隔时间', icon: 'none' })
+  }
+
+  /* ---------------------------- 指定打卡日 ---------------------------- */
+
+  function onExtraDateChange(e : UniPickerChangeEvent) : void {
+    extraOptionIndex.value = parseInt('' + e.detail.value)
+  }
+
+  function onAddExtraDate() : void {
+    // #ifdef APP-ANDROID
+    const dates = extraOptionDates.value
+    if (dates.length == 0) {
+      uni.showToast({ title: '暂无可选休息日', icon: 'none' })
+      return
+    }
+    const index = extraOptionIndex.value
+    if (index < 0 || index >= dates.length) {
+      uni.showToast({ title: '请选择休息日', icon: 'none' })
+      return
+    }
+    const date = dates[index]
+    const ok = addExtraDate(date)
+    if (ok) {
+      uni.showToast({ title: '已添加打卡日', icon: 'success' })
+      loadExtraDates()
+      extraOptionIndex.value = 0
+    } else {
+      uni.showToast({ title: '添加失败，请检查日期', icon: 'none' })
+    }
+    // #endif
+  }
+
+  function onRemoveExtraDate(date : string) : void {
+    // #ifdef APP-ANDROID
+    uni.showModal({
+      title: '移除打卡日',
+      content: '确定移除 ' + date + ' 吗？',
+      success: (res) => {
+        if (res.confirm) {
+          const ok = removeExtraDate(date)
+          if (ok) {
+            uni.showToast({ title: '已移除', icon: 'none' })
+            loadExtraDates()
+          }
+        }
+      }
+    })
+    // #endif
   }
 
   /* ---------------------------- 卡片录入 ---------------------------- */
@@ -292,6 +440,10 @@
       binding.value = false
     }
     // #endif
+  }
+
+  function onBindingLeave() : void {
+    cancelBinding()
   }
 
   function unbind() : void {
@@ -393,6 +545,8 @@
     // #endif
     loadConfig()
     loadEnv()
+    loadExtraDates()
+    extraOptionIndex.value = 0
   })
 
   onHide(() => {
@@ -496,45 +650,55 @@
   .btn {
     flex: 1;
     height: 44px;
+    line-height: 44px;
+    border-width: 0;
     border-radius: 10px;
-    align-items: center;
-    justify-content: center;
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-left: 0;
+    padding-right: 0;
+    font-size: 15px;
+    font-weight: normal;
   }
 
   .btn-secondary {
     background-color: #F2F3F5;
+    color: #1A1A1A;
+  }
+
+  .btn-secondary-hover {
+    background-color: #E6E7E9;
+    color: #1A1A1A;
   }
 
   .btn-danger {
     background-color: #FFEBEA;
+    color: #FF3B30;
     margin-left: 10px;
+  }
+
+  .btn-danger-hover {
+    background-color: #FFDCDA;
+    color: #FF3B30;
   }
 
   .btn-warning {
     background-color: #FFF4E5;
+    color: #B25E09;
+  }
+
+  .btn-warning-hover {
+    background-color: #FFE9CF;
+    color: #B25E09;
   }
 
   .btn-disabled {
     background-color: #F2F3F5;
+    color: #C7C7CC;
   }
 
-  .btn-text {
-    font-size: 15px;
-  }
-
-  .btn-text-secondary {
-    color: #1A1A1A;
-  }
-
-  .btn-text-danger {
-    color: #FF3B30;
-  }
-
-  .btn-text-warning {
-    color: #B25E09;
-  }
-
-  .btn-text-disabled {
+  .btn-hover-none {
+    background-color: #F2F3F5;
     color: #C7C7CC;
   }
 
@@ -542,15 +706,87 @@
     height: 40px;
   }
 
-  .overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 0, 0, 0.55);
+  .extra-collapse-wrap {
+    margin-top: 10px;
+  }
+
+  .extra-collapse-title {
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+  }
+
+  .extra-collapse-title-text {
+    font-size: 13px;
+    color: #6B7280;
+  }
+
+  .extra-collapse-content {
+    border-bottom-left-radius: 10px;
+    border-bottom-right-radius: 10px;
+  }
+
+  .extra-panel {
+    background-color: #FFFFFF;
+    padding: 6px;
+  }
+
+  .extra-list {
+    height: 168px;
+  }
+
+  .extra-item {
+    flex-direction: row;
     align-items: center;
-    justify-content: center;
+    justify-content: space-between;
+    background-color: #F5F6F8;
+    border-radius: 8px;
+    padding-top: 9px;
+    padding-bottom: 9px;
+    padding-left: 12px;
+    padding-right: 12px;
+    margin-bottom: 6px;
+  }
+
+  .extra-item-left {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .extra-item-date {
+    font-size: 14px;
+    color: #1A1A1A;
+    font-weight: bold;
+  }
+
+  .extra-item-week {
+    font-size: 12px;
+    color: #3478F6;
+    margin-left: 6px;
+  }
+
+  .extra-item-del {
+    padding-top: 3px;
+    padding-bottom: 3px;
+    padding-left: 8px;
+    padding-right: 8px;
+    border-radius: 6px;
+    background-color: #FFEBEA;
+  }
+
+  .extra-item-del-hover {
+    background-color: #FFDCDA;
+  }
+
+  .extra-item-del-text {
+    font-size: 12px;
+    color: #FF3B30;
+  }
+
+  .extra-empty {
+    font-size: 13px;
+    color: #9AA0A6;
+    margin-left: 4px;
+    margin-top: 4px;
   }
 
   .overlay-card {
@@ -577,15 +813,21 @@
   .overlay-btn {
     width: 100%;
     height: 42px;
+    line-height: 42px;
+    border-width: 0;
     border-radius: 10px;
     background-color: #F2F3F5;
-    align-items: center;
-    justify-content: center;
+    color: #1A1A1A;
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-left: 0;
+    padding-right: 0;
+    font-size: 15px;
     margin-top: 18px;
   }
 
-  .overlay-btn-text {
-    font-size: 15px;
+  .overlay-btn-hover {
+    background-color: #E6E7E9;
     color: #1A1A1A;
   }
 </style>

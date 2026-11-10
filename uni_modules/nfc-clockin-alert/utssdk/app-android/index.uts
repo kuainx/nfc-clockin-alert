@@ -24,7 +24,10 @@ import {
   readTodayState,
   writeRecord,
   readRecordStatus,
-  updateTodayStatus
+  updateTodayStatus,
+  readExtraDates,
+  insertExtraDate,
+  deleteExtraDate
 } from './Store.uts';
 import {
   isNfcSupported,
@@ -37,7 +40,14 @@ import {
 } from './NfcReader.uts';
 import { reschedule, cancelAll } from './Scheduler.uts';
 import { ensureChannel, cancelReminder, vibrate, isNotificationEnabled } from './Notifier.uts';
-import { todayString, addMinutes } from './DateUtil.uts';
+import {
+  todayString,
+  addMinutes,
+  parseDateString,
+  formatDateOf,
+  isWorkday,
+  dateOrderKey
+} from './DateUtil.uts';
 
 // 显式导出广播接收器，防止被编译优化（tree-shaking）移除
 export { AlarmReceiver, DeferActionReceiver, BootReceiver } from './Receivers.uts';
@@ -97,6 +107,48 @@ export function defer(minutes : number) : void {
   updateTodayStatus("deferred", deferUntil);
   cancelReminder();
   reschedule();
+}
+
+/* ------------------------------ 指定打卡日 ------------------------------ */
+
+export function getExtraDates() : Array<string> {
+  return readExtraDates();
+}
+
+export function addExtraDate(date : string) : boolean {
+  const target = date.trim();
+  if (target.length != 10) {
+    return false;
+  }
+  const timestamp = parseDateString(target);
+  if (timestamp <= 0) {
+    return false;
+  }
+  // 拒绝非法日期（例如 2026-02-30 会被顺延，回读不一致）
+  if (formatDateOf(timestamp) != target) {
+    return false;
+  }
+  // 必须为休息日（周六 / 周日）
+  if (isWorkday(timestamp)) {
+    return false;
+  }
+  // 允许今天及以后
+  if (dateOrderKey(target) < dateOrderKey(todayString())) {
+    return false;
+  }
+  const ok = insertExtraDate(target);
+  if (ok) {
+    reschedule();
+  }
+  return ok;
+}
+
+export function removeExtraDate(date : string) : boolean {
+  const ok = deleteExtraDate(date);
+  if (ok) {
+    reschedule();
+  }
+  return ok;
 }
 
 /* ------------------------------ NFC ------------------------------ */

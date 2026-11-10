@@ -77,6 +77,15 @@ export type MarkChecked = (date : string) => boolean
 export type MarkSkipped = (date : string) => boolean
 export type Defer = (minutes : number) => void
 
+/* ------------------------------ 指定打卡日 ------------------------------ */
+
+/** 获取额外打卡日列表（yyyy-MM-dd，升序，已清理过期日期） */
+export type GetExtraDates = () => string[]
+/** 添加额外打卡日（必须为周六 / 周日，且不早于今天），成功返回 true */
+export type AddExtraDate = (date : string) => boolean
+/** 移除额外打卡日，成功返回 true */
+export type RemoveExtraDate = (date : string) => boolean
+
 /* ------------------------------ NFC ------------------------------ */
 
 export type IsNfcSupported = () => boolean

@@ -1,10 +1,12 @@
 ﻿/**
- * 鎻掍欢灞傜粺涓€鏁版嵁瀛樺偍锛圫haredPreferences锛? * 蹇呴』鐙珛浜?uni 瀛樺偍锛氬紑鏈哄箍鎾?/ 闂归挓骞挎挱鍙兘鍦?uni 杩愯鐜鏈垵濮嬪寲鏃舵墽琛屻€? */
+ * 插件层统一数据存储（SharedPreferences）
+ * 必须独立于 uni 存储：开机广播 / 闹钟广播可能在 uni 运行环境未初始化时执行。
+ */
 
 import Context from 'android.content.Context';
 import SharedPreferences from 'android.content.SharedPreferences';
 import { ClockConfig, DayRecord, RecordStatus, TodayState, CheckinStatus } from '../interface.uts';
-import { todayString } from './DateUtil.uts';
+import { todayString, dateOrderKey } from './DateUtil.uts';
 
 const PREF_NAME : string = "nfc_clockin_alert_prefs";
 const KEY_CONFIG : string = "config";
@@ -14,6 +16,7 @@ const KEY_STATE_STATUS : string = "state_status";
 const KEY_STATE_DATE : string = "state_date";
 const KEY_STATE_DEFER : string = "state_defer_until";
 const KEY_STATE_RING : string = "state_ring_count";
+const KEY_EXTRA_DATES : string = "extra_dates";
 
 export const DEFAULT_CARD_ID : string = "";
 export const DEFAULT_START_HOUR : Int = 8;
@@ -35,7 +38,7 @@ function toLong(value : number) : Long {
   return Math.round(value).toLong();
 }
 
-/* -------------------------------- 閰嶇疆 -------------------------------- */
+/* -------------------------------- 配置 -------------------------------- */
 
 export function defaultConfig() : ClockConfig {
   const config : ClockConfig = {
@@ -76,9 +79,9 @@ export function writeConfig(config : ClockConfig) : void {
   editor.apply();
 }
 
-/* -------------------------------- 璁板綍 -------------------------------- */
+/* -------------------------------- 记录 -------------------------------- */
 
-/** 璁板綍瀛樺偍鏍煎紡锛氭棩鏈焲鐘舵€?;鏃ユ湡|鐘舵€?;... 锛堥伩鍏嶄娇鐢?JSON 瑙ｆ瀽锛屼簯绔紪璇戞洿绋筹級 */
+/** 记录存储格式：日期|状态;;日期|状态;;... （避免使用 JSON 解析，云端编译更稳） */
 function parseRecords(raw : string) : Array<DayRecord> {
   const result : Array<DayRecord> = [];
   if (raw.length == 0) {
@@ -165,7 +168,105 @@ export function countChecked() : number {
   return count;
 }
 
-/* ------------------------------ 褰撴棩鐘舵€?------------------------------ */
+/* ---------------------------- 额外打卡日 ---------------------------- */
+
+/** 存储格式：yyyy-MM-dd;;yyyy-MM-dd...（升序、去重） */
+function parseExtraDates(raw : string) : Array<string> {
+  const result : Array<string> = [];
+  if (raw.length == 0) {
+    return result;
+  }
+  const items = raw.split(";;");
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.length == 10) {
+      result.push(item);
+    }
+  }
+  return result;
+}
+
+function serializeExtraDates(dates : Array<string>) : string {
+  let out = "";
+  for (let i = 0; i < dates.length; i++) {
+    if (out.length > 0) {
+      out += ";;";
+    }
+    out += dates[i];
+  }
+  return out;
+}
+
+/** 去重并按日期升序排列 */
+function normalizeExtraDates(dates : Array<string>) : Array<string> {
+  const result : Array<string> = [];
+  for (let i = 0; i < dates.length; i++) {
+    const date = dates[i];
+    let exists = false;
+    for (let j = 0; j < result.length; j++) {
+      if (result[j] == date) {
+        exists = true;
+        break;
+      }
+    }
+    if (!exists) {
+      result.push(date);
+    }
+  }
+  result.sort();
+  return result;
+}
+
+/** 读取额外打卡日，并自动清理早于今天的日期 */
+export function readExtraDates() : Array<string> {
+  const raw = prefs().getString(KEY_EXTRA_DATES, "") ?? "";
+  const items = parseExtraDates(raw);
+  const todayKey = dateOrderKey(todayString());
+  const kept : Array<string> = [];
+  for (let i = 0; i < items.length; i++) {
+    if (dateOrderKey(items[i]) >= todayKey) {
+      kept.push(items[i]);
+    }
+  }
+  const normalized = normalizeExtraDates(kept);
+  const out = serializeExtraDates(normalized);
+  if (out != raw) {
+    prefs().edit().putString(KEY_EXTRA_DATES, out).apply();
+  }
+  return normalized;
+}
+
+/** 新增额外打卡日（存在则返回 false） */
+export function insertExtraDate(date : string) : boolean {
+  const items = readExtraDates();
+  for (let i = 0; i < items.length; i++) {
+    if (items[i] == date) {
+      return false;
+    }
+  }
+  items.push(date);
+  prefs().edit().putString(KEY_EXTRA_DATES, serializeExtraDates(normalizeExtraDates(items))).apply();
+  return true;
+}
+
+/** 删除额外打卡日（不存在则返回 false） */
+export function deleteExtraDate(date : string) : boolean {
+  const items = readExtraDates();
+  let removed = false;
+  for (let i = 0; i < items.length; i++) {
+    if (items[i] == date) {
+      items.splice(i, 1);
+      removed = true;
+      break;
+    }
+  }
+  if (removed) {
+    prefs().edit().putString(KEY_EXTRA_DATES, serializeExtraDates(items)).apply();
+  }
+  return removed;
+}
+
+/* ------------------------------ 当日状态 ------------------------------ */
 
 function readTodayStateRaw() : TodayState {
   const p = prefs();

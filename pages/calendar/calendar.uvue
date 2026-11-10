@@ -1,13 +1,17 @@
 <template>
   <view class="page">
-    <!-- 自定义导航栏 -->
-    <view class="nav-bar" :style="{ paddingTop: statusBarHeight + 'px' }">
-      <view class="nav-bar-inner">
-        <text class="nav-title">NFC 打卡闹钟</text>
-        <view class="nav-action" @tap="goSettings">
-          <text class="nav-action-text">设置</text>
-        </view>
-      </view>
+    <!-- 自定义导航栏（uni-ui-x / uni-nav-bar） -->
+    <view class="nav-wrap">
+      <uni-nav-bar :hide-default-back="true" right-class="nav-right">
+        <template #mid>
+          <text class="nav-title">NFC 打卡闹钟</text>
+        </template>
+        <template #right>
+          <view class="nav-action" hover-class="nav-action-hover" @tap="goSettings">
+            <text class="nav-action-text">设置</text>
+          </view>
+        </template>
+      </uni-nav-bar>
     </view>
 
     <scroll-view class="content" direction="vertical">
@@ -22,7 +26,12 @@
         </view>
         <view class="stat-right">
           <text class="stat-next-label">下次提醒</text>
-          <text class="stat-next-value">{{ nextAlarmText }}</text>
+          <view v-if="nextAlarmAt > 0" class="stat-next-row">
+            <uni-time-format :timestamp="nextAlarmAt" format="date" :style="statNextStyle"></uni-time-format>
+            <text class="stat-next-week">{{ nextAlarmWeek }}</text>
+            <text class="stat-next-clock">{{ nextAlarmClock }}</text>
+          </view>
+          <text v-else class="stat-next-value">{{ nextAlarmText }}</text>
         </view>
       </view>
 
@@ -56,9 +65,9 @@
         <view class="grid">
           <view v-for="cell in cells" :key="cell.key" class="grid-cell">
             <view v-if="cell.day > 0"
-              :class="['day-box', cell.status == 'checked' ? 'day-checked' : (cell.status == 'skipped' ? 'day-skipped' : ''), cell.isToday ? 'day-today' : '', cell.isFuture ? 'day-future' : '']">
+              :class="['day-box', cell.status == 'checked' ? 'day-checked' : (cell.status == 'skipped' ? 'day-skipped' : ''), cell.isExtra && cell.status == '' ? 'day-extra' : '', cell.isToday ? 'day-today' : '', cell.isFuture && !(cell.isExtra && cell.status == '') ? 'day-future' : '']">
               <text
-                :class="['day-text', cell.status == 'checked' ? 'day-text-checked' : (cell.status == 'skipped' ? 'day-text-skipped' : ''), cell.isFuture ? 'day-text-future' : '']">{{ cell.day }}</text>
+                :class="['day-text', cell.status == 'checked' ? 'day-text-checked' : (cell.status == 'skipped' ? 'day-text-skipped' : ''), cell.isExtra && cell.status == '' ? 'day-extra-text' : '', cell.isFuture && !(cell.isExtra && cell.status == '') ? 'day-text-future' : '']">{{ cell.day }}</text>
             </view>
           </view>
         </view>
@@ -72,6 +81,10 @@
             <view class="legend-ring"></view>
             <text class="legend-text">已跳过</text>
           </view>
+          <view class="legend-item">
+            <view class="legend-dot legend-dot-extra"></view>
+            <text class="legend-text">指定打卡日</text>
+          </view>
         </view>
       </view>
 
@@ -79,15 +92,23 @@
       <view class="info-card">
         <view class="info-row">
           <text class="info-label">当前日期</text>
-          <text class="info-value">{{ todayDateText }}</text>
+          <view class="info-date-row">
+            <uni-time-format :timestamp="nowTs" format="date" :style="infoValueStyle"></uni-time-format>
+            <text class="info-value info-weekday">{{ weekText }}</text>
+          </view>
         </view>
         <view class="info-row">
           <text class="info-label">当前时间</text>
-          <text class="info-value info-clock">{{ clockText }}</text>
+          <uni-time-format :timestamp="nowTs" format="time" :style="infoClockStyle"></uni-time-format>
         </view>
         <view class="info-row">
           <text class="info-label">下次计划打卡</text>
-          <text class="info-value">{{ nextAlarmText }}</text>
+          <view v-if="nextAlarmAt > 0" class="info-date-row">
+            <uni-time-format :timestamp="nextAlarmAt" format="date" :style="infoValueStyle"></uni-time-format>
+            <text class="info-value info-weekday">{{ nextAlarmWeek }}</text>
+            <text class="info-value info-alarm-clock">{{ nextAlarmClock }}</text>
+          </view>
+          <text v-else class="info-value">{{ nextAlarmText }}</text>
         </view>
         <view class="info-row">
           <text class="info-label">今日状态</text>
@@ -98,24 +119,23 @@
       <view class="bottom-space"></view>
     </scroll-view>
 
-    <!-- 提醒浮层 -->
-    <view v-if="isRinging" class="reminder-panel">
-      <view class="reminder-head">
-        <text class="reminder-title">{{ todayState.status == 'deferred' ? '已延迟提醒' : '打卡提醒已触发' }}</text>
-        <text class="reminder-sub">{{ reminderSubText }}</text>
-      </view>
-      <view class="reminder-tip-row">
-        <text class="reminder-tip">{{ scanHintText }}</text>
-      </view>
-      <view class="reminder-actions">
-        <view class="btn btn-secondary" @tap="onDefer">
-          <text class="btn-text btn-text-secondary">延迟 5 分钟</text>
+    <!-- 提醒浮层（内置 page-container 底部弹出层） -->
+    <page-container :show="reminderShow" position="bottom" :overlay="false" :round="true"
+      custom-style="background-color: transparent;" @afterleave="onReminderLeave">
+      <view class="reminder-panel">
+        <view class="reminder-head">
+          <text class="reminder-title">{{ isDeferred ? '已延迟提醒' : '打卡提醒已触发' }}</text>
+          <text class="reminder-sub">{{ reminderSubText }}</text>
         </view>
-        <view class="btn btn-primary" @tap="goSettings">
-          <text class="btn-text btn-text-primary">前往设置</text>
+        <view class="reminder-tip-row">
+          <text class="reminder-tip">{{ scanHintText }}</text>
+        </view>
+        <view class="reminder-actions">
+          <button class="btn btn-secondary" hover-class="btn-secondary-hover" @tap="onDefer">延迟 5 分钟</button>
+          <button class="btn btn-primary" hover-class="btn-primary-hover" @tap="goSettings">前往设置</button>
         </view>
       </view>
-    </view>
+    </page-container>
   </view>
 </template>
 
@@ -126,13 +146,12 @@
     markChecked, defer,
     isNfcSupportedCheck, isNfcEnabledCheck, openNfcSettings, openAppSettings,
     beginScan, endScan, onActivityVisible, onActivityInvisible,
-    rescheduleAll
+    rescheduleAll, getExtraDates
   } from '@/uni_modules/nfc-clockin-alert'
   import type { DayRecord, TodayState, ScanOptions } from '@/uni_modules/nfc-clockin-alert'
 
   const weekLabels : string[] = ['一', '二', '三', '四', '五', '六', '日']
 
-  const statusBarHeight = ref(0)
   const checkedCount = ref(0)
   const nfcSupported = ref(true)
   const nfcEnabled = ref(true)
@@ -140,18 +159,27 @@
 
   const viewYear = ref(0)
   const viewMonth = ref(0)
-  const todayDateText = ref('')
-  const clockText = ref('')
+  const nowTs = ref(Date.now())
+  const weekText = ref('')
+  const nextAlarmAt = ref(0)
   const nextAlarmText = ref('--')
   const statusText = ref('未到提醒时间')
   const statusClass = ref('')
   const isRinging = ref(false)
+  const isDeferred = ref(false)
+  const reminderShow = ref(false)
+  let reminderDismissed = false
+
+  const infoValueStyle = 'font-size: 14px; color: #1A1A1A;'
+  const infoClockStyle = 'font-size: 14px; color: #3478F6; font-weight: bold;'
+  const statNextStyle = 'font-size: 15px; color: #FFFFFF; font-weight: bold;'
 
   const todayState = ref<TodayState>({
     date: '', status: 'idle', deferUntil: 0, nextAlarmAt: 0, ringCount: 0
   } as TodayState)
 
   const recordMap = ref<Map<string, string>>(new Map<string, string>())
+  const extraDateMap = ref<Map<string, boolean>>(new Map<string, boolean>())
 
   type Cell = {
     key : string
@@ -159,6 +187,7 @@
     status : string
     isToday : boolean
     isFuture : boolean
+    isExtra : boolean
   }
 
   const cells = ref<Cell[]>([])
@@ -187,28 +216,45 @@
     return '请将 NFC 卡贴近手机感应区完成打卡'
   })
 
+  const nextAlarmWeek = computed(() : string => {
+    return nextAlarmAt.value > 0 ? weekdayText(nextAlarmAt.value) : ''
+  })
+
+  const nextAlarmClock = computed(() : string => {
+    if (nextAlarmAt.value <= 0) {
+      return ''
+    }
+    const d = new Date(nextAlarmAt.value)
+    return pad2(d.getHours()) + ':' + pad2(d.getMinutes())
+  })
+
   function pad2(v : number) : string {
     return v < 10 ? '0' + v : '' + v
   }
 
-  function formatDateTime(ts : number) : string {
-    if (ts <= 0) {
-      return '--'
+  function syncReminder(ringing : boolean) : void {
+    if (!ringing) {
+      reminderDismissed = false
+      reminderShow.value = false
+      return
     }
+    if (!reminderDismissed) {
+      reminderShow.value = true
+    }
+  }
+
+  function onReminderLeave() : void {
+    reminderShow.value = false
+    reminderDismissed = true
+  }
+
+  function weekdayText(ts : number) : string {
     const d = new Date(ts)
-    const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
-    return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + week + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes())
+    return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
   }
 
-  function formatToday() : string {
-    const d = new Date()
-    const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
-    return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + week
-  }
-
-  function formatClock() : string {
-    const d = new Date()
-    return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds())
+  function computeWeekText() : string {
+    return weekdayText(Date.now())
   }
 
   function dateKey(year : number, month : number, day : number) : string {
@@ -233,19 +279,31 @@
 
     const list : Cell[] = []
     for (let i = 0; i < offset; i++) {
-      list.push({ key: 'e' + i, day: 0, status: '', isToday: false, isFuture: false } as Cell)
+      list.push({ key: 'e' + i, day: 0, status: '', isToday: false, isFuture: false, isExtra: false } as Cell)
     }
     for (let d = 1; d <= total; d++) {
       const key = dateKey(year, month, d)
       const isToday = (year == ty && month == tm && d == td)
       const isFuture = (year > ty) || (year == ty && month > tm) || (year == ty && month == tm && d > td)
       const status = recordMap.value.get(key) ?? ''
-      list.push({ key: key, day: d, status: status, isToday: isToday, isFuture: isFuture } as Cell)
+      const isExtra = extraDateMap.value.get(key) ?? false
+      list.push({ key: key, day: d, status: status, isToday: isToday, isFuture: isFuture, isExtra: isExtra } as Cell)
     }
     while (list.length % 7 != 0) {
-      list.push({ key: 'f' + list.length, day: 0, status: '', isToday: false, isFuture: false } as Cell)
+      list.push({ key: 'f' + list.length, day: 0, status: '', isToday: false, isFuture: false, isExtra: false } as Cell)
     }
     cells.value = list
+  }
+
+  function refreshExtraDates() : void {
+    // #ifdef APP-ANDROID
+    const map : Map<string, boolean> = new Map<string, boolean>()
+    const list : string[] = getExtraDates()
+    for (let i = 0; i < list.length; i++) {
+      map.set(list[i], true)
+    }
+    extraDateMap.value = map
+    // #endif
   }
 
   function refreshRecords() : void {
@@ -294,17 +352,21 @@
     const state = getTodayState()
     todayState.value = state
     isRinging.value = (state.status == 'ringing' || state.status == 'deferred')
+    isDeferred.value = (state.status == 'deferred')
+    syncReminder(isRinging.value)
     statusText.value = computeStatusText(state)
     statusClass.value = computeStatusClass(state)
 
+    nextAlarmAt.value = state.nextAlarmAt
     if (state.nextAlarmAt > 0) {
-      nextAlarmText.value = formatDateTime(state.nextAlarmAt)
+      nextAlarmText.value = '--'
     } else if (cfg.enabled) {
       nextAlarmText.value = '未设置'
     } else {
       nextAlarmText.value = '提醒已关闭'
     }
 
+    refreshExtraDates()
     refreshRecords()
     // #endif
   }
@@ -416,11 +478,15 @@
   }
 
   function tick() : void {
-    todayDateText.value = formatToday()
-    clockText.value = formatClock()
+    nowTs.value = Date.now()
+    weekText.value = computeWeekText()
+    // #ifdef APP-ANDROID
     const state = getTodayState()
     todayState.value = state
     isRinging.value = (state.status == 'ringing' || state.status == 'deferred')
+    isDeferred.value = (state.status == 'deferred')
+    syncReminder(isRinging.value)
+    // #endif
   }
 
   function startTick() : void {
@@ -437,12 +503,10 @@
   }
 
   onReady(() => {
-    const win = uni.getWindowInfo()
-    statusBarHeight.value = win.statusBarHeight
     viewYear.value = nowYear()
     viewMonth.value = nowMonth()
-    todayDateText.value = formatToday()
-    clockText.value = formatClock()
+    nowTs.value = Date.now()
+    weekText.value = computeWeekText()
     refreshAll()
     startTick()
   })
@@ -479,18 +543,14 @@
     background-color: #F5F6F8;
   }
 
-  .nav-bar {
+  .nav-wrap {
     background-color: #FFFFFF;
     flex-direction: column;
   }
 
-  .nav-bar-inner {
-    height: 44px;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    padding-left: 16px;
-    padding-right: 16px;
+  .nav-right {
+    width: auto;
+    margin-right: 16px;
   }
 
   .nav-title {
@@ -500,7 +560,16 @@
   }
 
   .nav-action {
-    padding: 6px 10px;
+    height: 32px;
+    padding-left: 10px;
+    padding-right: 10px;
+    border-radius: 16px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .nav-action-hover {
+    background-color: #F2F3F5;
   }
 
   .nav-action-text {
@@ -560,6 +629,26 @@
   .stat-next-label {
     font-size: 13px;
     color: #D6E4FF;
+  }
+
+  .stat-next-row {
+    flex-direction: row;
+    align-items: center;
+    margin-top: 6px;
+  }
+
+  .stat-next-week {
+    font-size: 15px;
+    color: #FFFFFF;
+    font-weight: bold;
+    margin-left: 6px;
+  }
+
+  .stat-next-clock {
+    font-size: 15px;
+    color: #FFFFFF;
+    font-weight: bold;
+    margin-left: 6px;
   }
 
   .stat-next-value {
@@ -673,6 +762,16 @@
     background-color: transparent;
   }
 
+  .day-extra {
+    background-color: #EAF1FF;
+    border-color: #3478F6;
+  }
+
+  .day-extra-text {
+    color: #3478F6;
+    font-weight: bold;
+  }
+
   .day-text {
     font-size: 14px;
     color: #1A1A1A;
@@ -713,6 +812,13 @@
 
   .legend-dot-checked {
     background-color: #34C759;
+  }
+
+  .legend-dot-extra {
+    background-color: #EAF1FF;
+    border-width: 1.5px;
+    border-style: solid;
+    border-color: #3478F6;
   }
 
   .legend-ring {
@@ -758,9 +864,17 @@
     color: #1A1A1A;
   }
 
-  .info-clock {
-    color: #3478F6;
-    font-weight: bold;
+  .info-date-row {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .info-weekday {
+    margin-left: 6px;
+  }
+
+  .info-alarm-clock {
+    margin-left: 6px;
   }
 
   .status-checked {
@@ -783,13 +897,10 @@
   }
 
   .reminder-panel {
-    position: absolute;
-    left: 16px;
-    right: 16px;
-    bottom: 24px;
     background-color: #FFFFFF;
     border-radius: 16px;
     padding: 16px;
+    margin: 16px;
     border-width: 1px;
     border-style: solid;
     border-color: #FFE0DE;
@@ -828,31 +939,37 @@
   .btn {
     flex: 1;
     height: 44px;
+    line-height: 44px;
+    border-width: 0;
     border-radius: 10px;
-    align-items: center;
-    justify-content: center;
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-left: 0;
+    padding-right: 0;
+    font-size: 15px;
+    font-weight: normal;
   }
 
   .btn-secondary {
     background-color: #F2F3F5;
+    color: #1A1A1A;
     margin-right: 8px;
+  }
+
+  .btn-secondary-hover {
+    background-color: #E6E7E9;
+    color: #1A1A1A;
   }
 
   .btn-primary {
     background-color: #3478F6;
+    color: #FFFFFF;
+    font-weight: bold;
     margin-left: 8px;
   }
 
-  .btn-text {
-    font-size: 15px;
-  }
-
-  .btn-text-secondary {
-    color: #1A1A1A;
-  }
-
-  .btn-text-primary {
+  .btn-primary-hover {
+    background-color: #2A66D4;
     color: #FFFFFF;
-    font-weight: bold;
   }
 </style>
