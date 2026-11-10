@@ -8,39 +8,10 @@
     "styleIsolationVersion": "2",
     "vapor": true
   },
-  "quickapp": {},
-  "mp-weixin": {
-    "appid": "",
-    "setting": {
-      "urlCheck": false
-    },
-    "usingComponents": true
-  },
-  "mp-alipay": {
-    "usingComponents": true
-  },
-  "mp-baidu": {
-    "usingComponents": true
-  },
-  "mp-toutiao": {
-    "usingComponents": true
-  },
   "uniStatistics": {
     "enable": false
   },
   "vueVersion": "3",
-  "app": {
-    "distribute": {
-      "icons": {
-        "android": {
-          "hdpi": "",
-          "xhdpi": "",
-          "xxhdpi": "",
-          "xxxhdpi": ""
-        }
-      }
-    }
-  },
   "app-android": {
     "distribute": {
       "modules": {},
@@ -53,13 +24,6 @@
       "splashScreens": {
         "default": {}
       }
-    }
-  },
-  "app-ios": {
-    "distribute": {
-      "modules": {},
-      "icons": {},
-      "splashScreens": {}
     }
   }
 }

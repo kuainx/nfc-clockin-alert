@@ -17,26 +17,20 @@
 		rescheduleAll()
 	})
 
-	onAppHide(() => {
-	})
-
 	onLastPageBackPress(() => {
-		if (firstBackTime == 0) {
+		const now = Date.now()
+		if (firstBackTime == 0 || now - firstBackTime >= 2000) {
+			firstBackTime = now
 			uni.showToast({
 				title: '再按一次退出应用',
 				position: 'bottom',
 			})
-			firstBackTime = Date.now()
 			setTimeout(() => {
 				firstBackTime = 0
 			}, 2000)
-		} else if (Date.now() - firstBackTime < 2000) {
-			firstBackTime = Date.now()
+		} else {
 			uni.exit()
 		}
-	})
-
-	onExit(() => {
 	})
 	// #endif
 </script>

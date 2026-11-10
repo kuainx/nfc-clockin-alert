@@ -36,10 +36,10 @@
       </view>
 
       <!-- 环境提示 -->
-      <view v-if="!nfcSupported" class="banner banner-error" @tap="openEnvSettings">
+      <view v-if="!nfcSupported" class="banner banner-error" @tap="openAppSettings">
         <text class="banner-text">当前设备不支持 NFC</text>
       </view>
-      <view v-else-if="!nfcEnabled" class="banner banner-warn" @tap="openNfcSettingsTap">
+      <view v-else-if="!nfcEnabled" class="banner banner-warn" @tap="openNfcSettings">
         <text class="banner-text">NFC 未开启，点击开启</text>
       </view>
       <view v-else-if="!hasCard" class="banner banner-warn" @tap="goSettings">
@@ -64,10 +64,8 @@
 
         <view class="grid">
           <view v-for="cell in cells" :key="cell.key" class="grid-cell">
-            <view v-if="cell.day > 0"
-              :class="['day-box', cell.status == 'checked' ? 'day-checked' : (cell.status == 'skipped' ? 'day-skipped' : ''), cell.isExtra && cell.status == '' ? 'day-extra' : '', cell.isToday ? 'day-today' : '', cell.isFuture && !(cell.isExtra && cell.status == '') ? 'day-future' : '']">
-              <text
-                :class="['day-text', cell.status == 'checked' ? 'day-text-checked' : (cell.status == 'skipped' ? 'day-text-skipped' : ''), cell.isExtra && cell.status == '' ? 'day-extra-text' : '', cell.isFuture && !(cell.isExtra && cell.status == '') ? 'day-text-future' : '']">{{ cell.day }}</text>
+            <view v-if="cell.day > 0" :class="cell.boxClass">
+              <text :class="cell.textClass">{{ cell.day }}</text>
             </view>
           </view>
         </view>
@@ -140,7 +138,7 @@
 </template>
 
 <script setup lang="ts">
-  import { onReady, onShow, onHide, onUnload } from '@dcloudio/uni-app'
+  import { onShow, onHide, onUnload } from '@dcloudio/uni-app'
   import {
     getConfig, getRecords, getCheckedCount, getTodayState,
     markChecked, defer,
@@ -149,6 +147,7 @@
     rescheduleAll, getExtraDates
   } from '@/uni_modules/nfc-clockin-alert'
   import type { DayRecord, TodayState, ScanOptions } from '@/uni_modules/nfc-clockin-alert'
+  import { pad2, weekdayText } from '@/common/date-util.uts'
 
   const weekLabels : string[] = ['一', '二', '三', '四', '五', '六', '日']
 
@@ -160,12 +159,10 @@
   const viewYear = ref(0)
   const viewMonth = ref(0)
   const nowTs = ref(Date.now())
-  const weekText = ref('')
   const nextAlarmAt = ref(0)
-  const nextAlarmText = ref('--')
+  const nextAlarmText = ref('未设置')
   const statusText = ref('未到提醒时间')
   const statusClass = ref('')
-  const isRinging = ref(false)
   const isDeferred = ref(false)
   const reminderShow = ref(false)
   let reminderDismissed = false
@@ -188,6 +185,8 @@
     isToday : boolean
     isFuture : boolean
     isExtra : boolean
+    boxClass : string
+    textClass : string
   }
 
   const cells = ref<Cell[]>([])
@@ -228,9 +227,9 @@
     return pad2(d.getHours()) + ':' + pad2(d.getMinutes())
   })
 
-  function pad2(v : number) : string {
-    return v < 10 ? '0' + v : '' + v
-  }
+  const weekText = computed(() : string => {
+    return weekdayText(nowTs.value)
+  })
 
   function syncReminder(ringing : boolean) : void {
     if (!ringing) {
@@ -248,15 +247,6 @@
     reminderDismissed = true
   }
 
-  function weekdayText(ts : number) : string {
-    const d = new Date(ts)
-    return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
-  }
-
-  function computeWeekText() : string {
-    return weekdayText(Date.now())
-  }
-
   function dateKey(year : number, month : number, day : number) : string {
     return '' + year + '-' + pad2(month) + '-' + pad2(day)
   }
@@ -264,6 +254,50 @@
   function nowYear() : number { return new Date().getFullYear() }
   function nowMonth() : number { return new Date().getMonth() + 1 }
   function nowDay() : number { return new Date().getDate() }
+
+  function emptyCell(key : string) : Cell {
+    return {
+      key: key, day: 0, status: '', isToday: false, isFuture: false, isExtra: false,
+      boxClass: 'day-box', textClass: 'day-text'
+    } as Cell
+  }
+
+  function boxClassOf(status : string, isExtra : boolean, isToday : boolean, isFuture : boolean) : string {
+    let cls = 'day-box'
+    if (status == 'checked') {
+      cls += ' day-checked'
+    } else if (status == 'skipped') {
+      cls += ' day-skipped'
+    }
+    const extraActive = isExtra && status == ''
+    if (extraActive) {
+      cls += ' day-extra'
+    }
+    if (isToday) {
+      cls += ' day-today'
+    }
+    if (isFuture && !extraActive) {
+      cls += ' day-future'
+    }
+    return cls
+  }
+
+  function textClassOf(status : string, isExtra : boolean, isFuture : boolean) : string {
+    let cls = 'day-text'
+    if (status == 'checked') {
+      cls += ' day-text-checked'
+    } else if (status == 'skipped') {
+      cls += ' day-text-skipped'
+    }
+    const extraActive = isExtra && status == ''
+    if (extraActive) {
+      cls += ' day-extra-text'
+    }
+    if (isFuture && !extraActive) {
+      cls += ' day-text-future'
+    }
+    return cls
+  }
 
   function buildCells() : void {
     const year = viewYear.value
@@ -279,7 +313,7 @@
 
     const list : Cell[] = []
     for (let i = 0; i < offset; i++) {
-      list.push({ key: 'e' + i, day: 0, status: '', isToday: false, isFuture: false, isExtra: false } as Cell)
+      list.push(emptyCell('e' + i))
     }
     for (let d = 1; d <= total; d++) {
       const key = dateKey(year, month, d)
@@ -287,10 +321,14 @@
       const isFuture = (year > ty) || (year == ty && month > tm) || (year == ty && month == tm && d > td)
       const status = recordMap.value.get(key) ?? ''
       const isExtra = extraDateMap.value.get(key) ?? false
-      list.push({ key: key, day: d, status: status, isToday: isToday, isFuture: isFuture, isExtra: isExtra } as Cell)
+      list.push({
+        key: key, day: d, status: status, isToday: isToday, isFuture: isFuture, isExtra: isExtra,
+        boxClass: boxClassOf(status, isExtra, isToday, isFuture),
+        textClass: textClassOf(status, isExtra, isFuture)
+      } as Cell)
     }
     while (list.length % 7 != 0) {
-      list.push({ key: 'f' + list.length, day: 0, status: '', isToday: false, isFuture: false, isExtra: false } as Cell)
+      list.push(emptyCell('f' + list.length))
     }
     cells.value = list
   }
@@ -307,6 +345,7 @@
   }
 
   function refreshRecords() : void {
+    // #ifdef APP-ANDROID
     const map : Map<string, string> = new Map<string, string>()
     const records : DayRecord[] = getRecords()
     for (let i = 0; i < records.length; i++) {
@@ -314,6 +353,7 @@
     }
     recordMap.value = map
     buildCells()
+    // #endif
   }
 
   function computeStatusText(state : TodayState) : string {
@@ -351,20 +391,14 @@
 
     const state = getTodayState()
     todayState.value = state
-    isRinging.value = (state.status == 'ringing' || state.status == 'deferred')
+    const ringing = (state.status == 'ringing' || state.status == 'deferred')
     isDeferred.value = (state.status == 'deferred')
-    syncReminder(isRinging.value)
+    syncReminder(ringing)
     statusText.value = computeStatusText(state)
     statusClass.value = computeStatusClass(state)
 
     nextAlarmAt.value = state.nextAlarmAt
-    if (state.nextAlarmAt > 0) {
-      nextAlarmText.value = '--'
-    } else if (cfg.enabled) {
-      nextAlarmText.value = '未设置'
-    } else {
-      nextAlarmText.value = '提醒已关闭'
-    }
+    nextAlarmText.value = cfg.enabled ? '未设置' : '提醒已关闭'
 
     refreshExtraDates()
     refreshRecords()
@@ -465,27 +499,14 @@
     uni.navigateTo({ url: '/pages/settings/settings' })
   }
 
-  function openNfcSettingsTap() : void {
-    // #ifdef APP-ANDROID
-    openNfcSettings()
-    // #endif
-  }
-
-  function openEnvSettings() : void {
-    // #ifdef APP-ANDROID
-    openAppSettings()
-    // #endif
-  }
-
   function tick() : void {
     nowTs.value = Date.now()
-    weekText.value = computeWeekText()
     // #ifdef APP-ANDROID
     const state = getTodayState()
     todayState.value = state
-    isRinging.value = (state.status == 'ringing' || state.status == 'deferred')
+    const ringing = (state.status == 'ringing' || state.status == 'deferred')
     isDeferred.value = (state.status == 'deferred')
-    syncReminder(isRinging.value)
+    syncReminder(ringing)
     // #endif
   }
 
@@ -502,20 +523,15 @@
     }
   }
 
-  onReady(() => {
-    viewYear.value = nowYear()
-    viewMonth.value = nowMonth()
-    nowTs.value = Date.now()
-    weekText.value = computeWeekText()
-    refreshAll()
-    startTick()
-  })
-
   onShow(() => {
     // #ifdef APP-ANDROID
     rescheduleAll()
     onActivityVisible()
     // #endif
+    if (viewYear.value == 0) {
+      viewYear.value = nowYear()
+      viewMonth.value = nowMonth()
+    }
     refreshAll()
     ensureScan()
     if (tickTimer == -1) {

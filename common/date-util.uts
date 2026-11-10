@@ -1,0 +1,28 @@
+/**
+ * 日期时间通用工具
+ */
+
+const WEEK_LABELS : string[] = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+
+export function pad2(v : number) : string {
+  return v < 10 ? '0' + v : '' + v
+}
+
+export function weekdayText(ts : number) : string {
+  return WEEK_LABELS[new Date(ts).getDay()]
+}
+
+export function weekdayOfDateString(date : string) : string {
+  const parts = date.split('-')
+  if (parts.length != 3) {
+    return ''
+  }
+  const year = parseInt(parts[0])
+  const month = parseInt(parts[1])
+  const day = parseInt(parts[2])
+  return weekdayText(new Date(year, month - 1, day).getTime())
+}
+
+export function formatDateOf(d : Date) : string {
+  return '' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
+}

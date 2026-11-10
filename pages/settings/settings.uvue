@@ -43,7 +43,7 @@
       <view class="section">
         <text class="section-title">提醒设置</text>
         <view class="card">
-          <picker mode="time" :value="startTimeValue" @change="onStartTimeChange">
+          <picker mode="time" :value="startTimeText" @change="onStartTimeChange">
             <view class="row">
               <text class="row-label">开始提示时间</text>
               <text class="row-value">{{ startTimeText }}</text>
@@ -148,6 +148,7 @@
     getExtraDates, addExtraDate, removeExtraDate
   } from '@/uni_modules/nfc-clockin-alert'
   import type { ClockConfig, TodayState, ScanOptions } from '@/uni_modules/nfc-clockin-alert'
+  import { pad2, weekdayOfDateString, formatDateOf } from '@/common/date-util.uts'
 
   const hasCard = ref(false)
   const cardId = ref('')
@@ -166,8 +167,6 @@
 
   const notificationEnabled = ref(true)
   const batteryIgnored = ref(false)
-  const nfcSupported = ref(true)
-  const nfcEnabled = ref(true)
 
   const binding = ref(false)
   const bindRemain = ref(60)
@@ -179,10 +178,6 @@
     return pad2(startHour.value) + ':' + pad2(startMinute.value)
   })
 
-  const startTimeValue = computed(() => {
-    return pad2(startHour.value) + ':' + pad2(startMinute.value)
-  })
-
   const bindRemainText = computed(() => {
     return '倒计时 ' + bindRemain.value + ' 秒'
   })
@@ -191,7 +186,7 @@
     const list : ExtraDateItem[] = []
     for (let i = 0; i < extraDates.value.length; i++) {
       const date = extraDates.value[i]
-      list.push({ date: date, week: weekdayOf(date) } as ExtraDateItem)
+      list.push({ date: date, week: weekdayOfDateString(date) } as ExtraDateItem)
     }
     return list
   })
@@ -207,7 +202,7 @@
       const d = new Date(cursor)
       const day = d.getDay()
       if (day == 0 || day == 6) {
-        const date = formatDateOfDate(d)
+        const date = formatDateOf(d)
         let exists = false
         for (let i = 0; i < extraDates.value.length; i++) {
           if (extraDates.value[i] == date) {
@@ -230,7 +225,7 @@
     const list : string[] = []
     const dates = extraOptionDates.value
     for (let i = 0; i < dates.length; i++) {
-      list.push(dates[i] + ' ' + weekdayOf(dates[i]))
+      list.push(dates[i] + ' ' + weekdayOfDateString(dates[i]))
     }
     return list
   })
@@ -257,26 +252,6 @@
     return s == 'checked' || s == 'skipped'
   })
 
-  function pad2(v : number) : string {
-    return v < 10 ? '0' + v : '' + v
-  }
-
-  function formatDateOfDate(d : Date) : string {
-    return '' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
-  }
-
-  function weekdayOf(date : string) : string {
-    const parts = date.split('-')
-    if (parts.length != 3) {
-      return ''
-    }
-    const year = parseInt(parts[0])
-    const month = parseInt(parts[1])
-    const day = parseInt(parts[2])
-    const d = new Date(year, month - 1, day)
-    return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
-  }
-
   function loadExtraDates() : void {
     // #ifdef APP-ANDROID
     extraDates.value = getExtraDates()
@@ -299,8 +274,6 @@
     // #ifdef APP-ANDROID
     notificationEnabled.value = isNotificationEnabled()
     batteryIgnored.value = isIgnoringBatteryOptimizations()
-    nfcSupported.value = isNfcSupportedCheck()
-    nfcEnabled.value = isNfcEnabledCheck()
     todayState.value = getTodayState()
     // #endif
   }
@@ -402,8 +375,10 @@
     bindTimer = setInterval(() => {
       bindRemain.value = bindRemain.value - 1
       if (bindRemain.value <= 0) {
-        cancelBinding()
-        uni.showToast({ title: '未读取到卡片', icon: 'none' })
+        if (bindTimer != -1) {
+          clearInterval(bindTimer)
+          bindTimer = -1
+        }
       }
     }, 1000)
     const options : ScanOptions = {

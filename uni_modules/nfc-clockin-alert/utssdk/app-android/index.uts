@@ -13,7 +13,6 @@ import {
   DayRecord,
   TodayState,
   ScanOptions,
-  EnvCheckResult,
   RecordStatus
 } from '../interface.uts';
 import {
@@ -38,8 +37,8 @@ import {
   resumeReaderIfNeeded,
   pauseReader
 } from './NfcReader.uts';
-import { reschedule, cancelAll } from './Scheduler.uts';
-import { ensureChannel, cancelReminder, vibrate, isNotificationEnabled } from './Notifier.uts';
+import { reschedule } from './Scheduler.uts';
+import { ensureChannel, cancelReminder, isNotificationEnabled } from './Notifier.uts';
 import {
   todayString,
   addMinutes,
@@ -187,21 +186,7 @@ export function rescheduleAll() : void {
   reschedule();
 }
 
-export function cancelAllAlarms() : void {
-  cancelAll();
-}
-
 /* ------------------------------ 权限与环境 ------------------------------ */
-
-export function checkEnv() : EnvCheckResult {
-  const result : EnvCheckResult = {
-    nfcSupported: isNfcSupported(),
-    nfcEnabled: isNfcEnabled(),
-    notificationEnabled: isNotificationEnabled(),
-    ignoringBatteryOptimizations: isIgnoringBatteryOptimizations()
-  };
-  return result;
-}
 
 export function requestNotificationPermission(callback : ((granted : boolean) => void) | null) : void {
   ensureChannel();
@@ -263,10 +248,4 @@ export function openAppSettings() : void {
   intent.setData(Uri.parse("package:" + ctx.getPackageName()));
   intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
   ctx.startActivity(intent);
-}
-
-/* ------------------------------ 工具 ------------------------------ */
-
-export function vibrateDevice(milliseconds : number) : void {
-  vibrate(milliseconds);
 }

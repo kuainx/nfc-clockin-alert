@@ -7,11 +7,10 @@ import Context from 'android.content.Context';
 import Intent from 'android.content.Intent';
 import PendingIntent from 'android.app.PendingIntent';
 import AlarmManager from 'android.app.AlarmManager';
-import { readConfig, readTodayState, setNextAlarmAt, clearNextAlarmAt, readRecordStatus, readExtraDates } from './Store.uts';
+import { readConfig, readTodayState, setNextAlarmAt, readRecordStatus, readExtraDates } from './Store.uts';
 import { todayString, nextCheckinTime, addMinutes, workTimeOf, isCheckinDay } from './DateUtil.uts';
 import { AlarmReceiver } from './Receivers.uts';
-
-export const ACTION_REMINDER : string = "io.dcloud.nfcclockin.ACTION_REMINDER";
+import { ACTION_REMINDER } from './Constants.uts';
 
 const REQUEST_CODE : Int = 4001;
 
@@ -29,12 +28,6 @@ function reminderPendingIntent() : PendingIntent {
   let pendingFlags : Int = PendingIntent.FLAG_UPDATE_CURRENT;
   pendingFlags = pendingFlags | PendingIntent.FLAG_IMMUTABLE;
   return PendingIntent.getBroadcast(context(), REQUEST_CODE, intent, pendingFlags);
-}
-
-/** 取消当前已注册的提醒闹钟 */
-export function cancelAll() : void {
-  alarmManager().cancel(reminderPendingIntent());
-  clearNextAlarmAt();
 }
 
 export function scheduleAt(timestamp : number) : void {
@@ -78,9 +71,9 @@ export function reschedule() : void {
     return;
   }
 
-  // 今日处于延迟中
-  if (state.status == "deferred" && state.deferUntil > now) {
-    scheduleAt(state.deferUntil);
+  // 今日处于延迟中：未到期排到延迟结束，已到期立即补一次提醒
+  if (state.status == "deferred") {
+    scheduleAt(state.deferUntil > now ? state.deferUntil : now);
     return;
   }
 

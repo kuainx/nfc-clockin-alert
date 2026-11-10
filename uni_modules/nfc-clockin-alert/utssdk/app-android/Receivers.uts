@@ -14,6 +14,7 @@ import { reschedule } from './Scheduler.uts';
 import { updateTodayStatus } from './Store.uts';
 import { cancelReminder } from './Notifier.uts';
 import { addMinutes } from './DateUtil.uts';
+import { ACTION_DEFER } from './Constants.uts';
 
 /** 闹钟到点 */
 export class AlarmReceiver extends BroadcastReceiver {
@@ -34,7 +35,7 @@ export class DeferActionReceiver extends BroadcastReceiver {
 
   override onReceive(context : Context, intent : Intent) {
     const action = intent.getAction();
-    if (action != "io.dcloud.nfcclockin.ACTION_DEFER") {
+    if (action != ACTION_DEFER) {
       return;
     }
     const deferUntil = addMinutes(Date.now(), 5);
@@ -52,7 +53,7 @@ export class BootReceiver extends BroadcastReceiver {
 
   override onReceive(context : Context, intent : Intent) {
     const action = intent.getAction();
-    if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) {
+    if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED && action != "android.intent.action.QUICKBOOT_POWERON") {
       return;
     }
     reschedule();

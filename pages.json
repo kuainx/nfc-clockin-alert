@@ -23,6 +23,5 @@
 		"navigationBarTitleText": "NFC 打卡闹钟",
 		"navigationBarBackgroundColor": "#FFFFFF",
 		"backgroundColor": "#F5F6F8"
-	},
-	"uniIdRouter": {}
+	}
 }

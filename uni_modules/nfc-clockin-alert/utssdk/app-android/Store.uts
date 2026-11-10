@@ -119,7 +119,7 @@ function serializeRecords(records : Array<DayRecord>) : string {
 }
 
 export function readRecords() : Array<DayRecord> {
-  return parseRecords(prefs().getString("records", "") ?? "");
+  return parseRecords(prefs().getString(KEY_RECORDS, "") ?? "");
 }
 
 export function readRecordStatus(date : string) : RecordStatus | null {
@@ -135,26 +135,17 @@ export function readRecordStatus(date : string) : RecordStatus | null {
 export function writeRecord(date : string, status : RecordStatus) : void {
   const records = readRecords();
   let found = false;
-  let out = "";
   for (let i = 0; i < records.length; i++) {
-    const item = records[i];
-    let itemStatus : string = item.status;
-    if (item.date == date) {
-      itemStatus = status;
+    if (records[i].date == date) {
+      records[i].status = status;
       found = true;
+      break;
     }
-    if (out.length > 0) {
-      out += ";;";
-    }
-    out += item.date + "|" + itemStatus;
   }
   if (!found) {
-    if (out.length > 0) {
-      out += ";;";
-    }
-    out += date + "|" + status;
+    records.push({ date: date, status: status } as DayRecord);
   }
-  prefs().edit().putString("records", out).apply();
+  prefs().edit().putString(KEY_RECORDS, serializeRecords(records)).apply();
 }
 
 export function countChecked() : number {
@@ -268,7 +259,7 @@ export function deleteExtraDate(date : string) : boolean {
 
 /* ------------------------------ 当日状态 ------------------------------ */
 
-function readTodayStateRaw() : TodayState {
+export function readTodayState() : TodayState {
   const p = prefs();
   const date = p.getString(KEY_STATE_DATE, "") ?? "";
   const today = todayString();
@@ -292,10 +283,6 @@ function readTodayStateRaw() : TodayState {
     ringCount: p.getInt(KEY_STATE_RING, 0)
   };
   return state;
-}
-
-export function readTodayState() : TodayState {
-  return readTodayStateRaw();
 }
 
 export function saveTodayState(state : TodayState) : void {
@@ -339,13 +326,5 @@ export function getNextAlarmAt() : number {
 }
 
 export function setNextAlarmAt(timestamp : number) : void {
-  const state = readTodayState();
-  state.nextAlarmAt = timestamp;
-  saveTodayState(state);
-}
-
-export function clearNextAlarmAt() : void {
-  const state = readTodayState();
-  state.nextAlarmAt = 0;
-  saveTodayState(state);
+  prefs().edit().putLong(KEY_NEXT_ALARM, toLong(timestamp)).apply();
 }

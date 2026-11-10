@@ -1,0 +1,6 @@
+/**
+ * 广播 Action 常量
+ */
+
+export const ACTION_REMINDER : string = "io.dcloud.nfcclockin.ACTION_REMINDER";
+export const ACTION_DEFER : string = "io.dcloud.nfcclockin.ACTION_DEFER";
