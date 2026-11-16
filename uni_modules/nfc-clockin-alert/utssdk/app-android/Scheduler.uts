@@ -1,12 +1,13 @@
 /**
- * 闹钟调度（方案 A：AlarmManager 链式单发）
- * 使用 setAndAllowWhileIdle，不申请 SCHEDULE_EXACT_ALARM，允许分钟级偏移。
+ * 闹钟调度（AlarmManager 链式单发）
+ * 优先使用精确闹钟 setExactAndAllowWhileIdle，无精确闹钟权限时退回 setAndAllowWhileIdle。
  */
 
 import Context from 'android.content.Context';
 import Intent from 'android.content.Intent';
 import PendingIntent from 'android.app.PendingIntent';
 import AlarmManager from 'android.app.AlarmManager';
+import Build from 'android.os.Build';
 import { readConfig, readTodayState, setNextAlarmAt, readRecordStatus, readExtraDates } from './Store.uts';
 import { todayString, nextCheckinTime, addMinutes, workTimeOf, isCheckinDay } from './DateUtil.uts';
 import { AlarmReceiver } from './Receivers.uts';
@@ -36,15 +37,28 @@ export function scheduleAt(timestamp : number) : void {
   }
   const manager = alarmManager();
   const pending = reminderPendingIntent();
-  manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, timestamp.toLong(), pending);
+  const triggerAt = timestamp.toLong();
+  // Android 12+ 精确闹钟需要用户/系统授权，未授权时退回非精确闹钟（可能被延迟）
+  if (Build.VERSION.SDK_INT >= 31 && !manager.canScheduleExactAlarms()) {
+    manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending);
+  } else {
+    try {
+      manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending);
+    } catch (e) {
+      manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending);
+    }
+  }
   setNextAlarmAt(timestamp);
 }
 
 /**
  * 重新计算并注册下一次提醒。
- * - 今日已完成（checked / skipped）→ 排到下一个工作日
+ * - 今日已完成（checked / skipped）→ 排到下一个打卡日
+ * - 今日非打卡日 → 排到下一个打卡日
  * - 今日处于 deferred → 排到 deferUntil
- * - 其他 → 若今日提醒时间未到则排今日，否则排下一个工作日
+ * - 今日处于 ringing → 按间隔继续
+ * - 今日已过提醒时间但尚未打卡 → 立即补一次提醒（避免打开 App 时被直接顺延到次日）
+ * - 尚未到提醒时间 → 排今日提醒时间
  */
 export function reschedule() : void {
   const now = Date.now();
@@ -71,6 +85,15 @@ export function reschedule() : void {
     return;
   }
 
+  // 今日非打卡日 → 下一个打卡日
+  if (!isCheckinDay(now, extraDates)) {
+    const nextTime = nextCheckinTime(now, config.startHour, config.startMinute, extraDates);
+    if (nextTime > 0) {
+      scheduleAt(nextTime);
+    }
+    return;
+  }
+
   // 今日处于延迟中：未到期排到延迟结束，已到期立即补一次提醒
   if (state.status == "deferred") {
     scheduleAt(state.deferUntil > now ? state.deferUntil : now);
@@ -83,25 +106,14 @@ export function reschedule() : void {
     return;
   }
 
-  // 今日非打卡日 → 下一个打卡日
-  if (!isCheckinDay(now, extraDates)) {
-    const nextTime = nextCheckinTime(now, config.startHour, config.startMinute, extraDates);
-    if (nextTime > 0) {
-      scheduleAt(nextTime);
-    }
-    return;
-  }
-
   const todayTime = workTimeOf(now, config.startHour, config.startMinute);
   if (todayTime > now) {
     scheduleAt(todayTime);
     return;
   }
 
-  const nextTime = nextCheckinTime(now, config.startHour, config.startMinute, extraDates);
-  if (nextTime > 0) {
-    scheduleAt(nextTime);
-  }
+  // 已过提醒时间且今日尚未打卡：立即补提醒，而不是跳到次日
+  scheduleAt(now);
 }
 
 /** 只取消闹钟 */

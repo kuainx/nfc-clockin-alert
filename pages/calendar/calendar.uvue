@@ -86,6 +86,21 @@
         </view>
       </view>
 
+      <!-- 打卡提醒（内联） -->
+      <view v-if="reminderShow" class="reminder-panel">
+        <view class="reminder-head">
+          <text class="reminder-title">{{ isDeferred ? '已延迟提醒' : '打卡提醒已触发' }}</text>
+          <text class="reminder-sub">{{ reminderSubText }}</text>
+        </view>
+        <view class="reminder-tip-row">
+          <text class="reminder-tip">{{ scanHintText }}</text>
+        </view>
+        <view class="reminder-actions">
+          <button class="btn btn-secondary" hover-class="btn-secondary-hover" @tap="onDefer">延迟 5 分钟</button>
+          <button class="btn btn-primary" hover-class="btn-primary-hover" @tap="goSettings">前往设置</button>
+        </view>
+      </view>
+
       <!-- 实时信息 -->
       <view class="info-card">
         <view class="info-row">
@@ -116,24 +131,6 @@
 
       <view class="bottom-space"></view>
     </scroll-view>
-
-    <!-- 提醒浮层（内置 page-container 底部弹出层） -->
-    <page-container :show="reminderShow" position="bottom" :overlay="false" :round="true"
-      custom-style="background-color: transparent;" @afterleave="onReminderLeave">
-      <view class="reminder-panel">
-        <view class="reminder-head">
-          <text class="reminder-title">{{ isDeferred ? '已延迟提醒' : '打卡提醒已触发' }}</text>
-          <text class="reminder-sub">{{ reminderSubText }}</text>
-        </view>
-        <view class="reminder-tip-row">
-          <text class="reminder-tip">{{ scanHintText }}</text>
-        </view>
-        <view class="reminder-actions">
-          <button class="btn btn-secondary" hover-class="btn-secondary-hover" @tap="onDefer">延迟 5 分钟</button>
-          <button class="btn btn-primary" hover-class="btn-primary-hover" @tap="goSettings">前往设置</button>
-        </view>
-      </view>
-    </page-container>
   </view>
 </template>
 
@@ -165,7 +162,6 @@
   const statusClass = ref('')
   const isDeferred = ref(false)
   const reminderShow = ref(false)
-  let reminderDismissed = false
 
   const infoValueStyle = 'font-size: 14px; color: #1A1A1A;'
   const infoClockStyle = 'font-size: 14px; color: #3478F6; font-weight: bold;'
@@ -232,19 +228,7 @@
   })
 
   function syncReminder(ringing : boolean) : void {
-    if (!ringing) {
-      reminderDismissed = false
-      reminderShow.value = false
-      return
-    }
-    if (!reminderDismissed) {
-      reminderShow.value = true
-    }
-  }
-
-  function onReminderLeave() : void {
-    reminderShow.value = false
-    reminderDismissed = true
+    reminderShow.value = ringing
   }
 
   function dateKey(year : number, month : number, day : number) : string {
@@ -507,6 +491,10 @@
     const ringing = (state.status == 'ringing' || state.status == 'deferred')
     isDeferred.value = (state.status == 'deferred')
     syncReminder(ringing)
+    // 兜底：闹钟被系统延迟 / 丢弃时，前台发现已过期就重新排一次（立即补提醒）
+    if (state.status == 'idle' && state.nextAlarmAt > 0 && nowTs.value > state.nextAlarmAt + 60000) {
+      rescheduleAll()
+    }
     // #endif
   }
 
@@ -916,7 +904,7 @@
     background-color: #FFFFFF;
     border-radius: 16px;
     padding: 16px;
-    margin: 16px;
+    margin-top: 12px;
     border-width: 1px;
     border-style: solid;
     border-color: #FFE0DE;

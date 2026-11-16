@@ -127,6 +127,7 @@
 
     <!-- 录入卡片弹层（内置 page-container 居中弹出） -->
     <page-container :show="binding" position="center" overlay-style="background-color: rgba(0, 0, 0, 0.55);"
+      custom-style="background-color: transparent; display: flex; flex-direction: column; justify-content: center; align-items: center;"
       @afterleave="onBindingLeave">
       <view class="overlay-card">
         <text class="overlay-title">请将 NFC 卡贴近手机感应区</text>
@@ -134,6 +135,18 @@
         <button class="overlay-btn" hover-class="overlay-btn-hover" @tap="cancelBinding">取消</button>
       </view>
     </page-container>
+
+    <!-- 解除绑定确认 -->
+    <app-modal :show="unbindShow" title="解除绑定" content="确定要解除当前 NFC 卡的绑定吗？" confirm-text="解除" confirm-color="#FF3B30"
+      @confirm="onUnbindConfirm" @cancel="closeUnbind"></app-modal>
+
+    <!-- 移除打卡日确认 -->
+    <app-modal :show="removeShow" title="移除打卡日" :content="'确定移除 ' + pendingRemoveDate + ' 吗？'" confirm-text="移除"
+      confirm-color="#FF3B30" @confirm="onRemoveConfirm" @cancel="closeRemove"></app-modal>
+
+    <!-- 今日不打卡三次确认 -->
+    <app-modal :show="skipShow" :title="skipTitle" :content="skipContent" confirm-text="确认跳过" confirm-color="#FF9500"
+      @confirm="onSkipConfirm" @cancel="onSkipCancel"></app-modal>
   </view>
 </template>
 
@@ -170,6 +183,11 @@
 
   const binding = ref(false)
   const bindRemain = ref(60)
+
+  const unbindShow = ref(false)
+  const removeShow = ref(false)
+  const pendingRemoveDate = ref('')
+  const skipStep = ref(0)
   const todayState = ref<TodayState>({ date: '', status: 'idle', deferUntil: 0, nextAlarmAt: 0, ringCount: 0 } as TodayState)
 
   let bindTimer : number = -1
@@ -250,6 +268,18 @@
   const skipDisabled = computed(() => {
     const s = todayState.value.status
     return s == 'checked' || s == 'skipped'
+  })
+
+  const skipShow = computed(() : boolean => {
+    return skipStep.value > 0
+  })
+
+  const skipTitle = computed(() : string => {
+    return '今日不打卡（' + skipStep.value + '/3）'
+  })
+
+  const skipContent = computed(() : string => {
+    return skipStep.value == 3 ? '这是最后一次确认，确认后将跳过今日打卡' : '确定要跳过今日打卡吗？'
   })
 
   function loadExtraDates() : void {
@@ -341,20 +371,23 @@
 
   function onRemoveExtraDate(date : string) : void {
     // #ifdef APP-ANDROID
-    uni.showModal({
-      title: '移除打卡日',
-      content: '确定移除 ' + date + ' 吗？',
-      success: (res) => {
-        if (res.confirm) {
-          const ok = removeExtraDate(date)
-          if (ok) {
-            uni.showToast({ title: '已移除', icon: 'none' })
-            loadExtraDates()
-          }
-        }
-      }
-    })
+    pendingRemoveDate.value = date
+    removeShow.value = true
     // #endif
+  }
+
+  function closeRemove() : void {
+    removeShow.value = false
+  }
+
+  function onRemoveConfirm() : void {
+    const date = pendingRemoveDate.value
+    removeShow.value = false
+    const ok = removeExtraDate(date)
+    if (ok) {
+      uni.showToast({ title: '已移除', icon: 'none' })
+      loadExtraDates()
+    }
   }
 
   /* ---------------------------- 卡片录入 ---------------------------- */
@@ -422,58 +455,39 @@
   }
 
   function unbind() : void {
-    uni.showModal({
-      title: '解除绑定',
-      content: '确定要解除当前 NFC 卡的绑定吗？',
-      success: (res) => {
-        if (res.confirm) {
-          cardId.value = ''
-          hasCard.value = false
-          persist()
-          uni.showToast({ title: '已解除绑定', icon: 'none' })
-        }
-      }
-    })
+    unbindShow.value = true
+  }
+
+  function closeUnbind() : void {
+    unbindShow.value = false
+  }
+
+  function onUnbindConfirm() : void {
+    unbindShow.value = false
+    cardId.value = ''
+    hasCard.value = false
+    persist()
+    uni.showToast({ title: '已解除绑定', icon: 'none' })
   }
 
   /* ---------------------------- 今日不打卡 ---------------------------- */
 
-  function confirmOnce(step : number) : Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
-      uni.showModal({
-        title: '今日不打卡（' + step + '/3）',
-        content: step == 3 ? '这是最后一次确认，确认后将跳过今日打卡' : '确定要跳过今日打卡吗？',
-        success: (res) => {
-          resolve(res.confirm)
-        },
-        fail: (_err) => {
-          resolve(false)
-        }
-      })
-    })
-  }
-
-  async function onSkipToday() : Promise<void> {
+  function onSkipToday() : void {
     // #ifdef APP-ANDROID
     if (skipDisabled.value) {
       uni.showToast({ title: '今日已完成记录', icon: 'none' })
       return
     }
-    const ok1 = await confirmOnce(1)
-    if (!ok1) {
-      uni.showToast({ title: '已取消', icon: 'none' })
+    skipStep.value = 1
+    // #endif
+  }
+
+  function onSkipConfirm() : void {
+    if (skipStep.value < 3) {
+      skipStep.value = skipStep.value + 1
       return
     }
-    const ok2 = await confirmOnce(2)
-    if (!ok2) {
-      uni.showToast({ title: '已取消', icon: 'none' })
-      return
-    }
-    const ok3 = await confirmOnce(3)
-    if (!ok3) {
-      uni.showToast({ title: '已取消', icon: 'none' })
-      return
-    }
+    skipStep.value = 0
     const done = markSkipped('')
     if (done) {
       uni.showToast({ title: '今日已跳过', icon: 'none' })
@@ -484,6 +498,12 @@
     } else {
       uni.showToast({ title: '今日已完成记录', icon: 'none' })
     }
+  }
+
+  function onSkipCancel() : void {
+    // #ifdef APP-ANDROID
+    skipStep.value = 0
+    uni.showToast({ title: '已取消', icon: 'none' })
     // #endif
   }
 

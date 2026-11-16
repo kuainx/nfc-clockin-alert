@@ -16,10 +16,10 @@
     "distribute": {
       "modules": {},
       "icons": {
-        "hdpi": "",
-        "xhdpi": "",
-        "xxhdpi": "",
-        "xxxhdpi": ""
+        "hdpi": "static/logo.png",
+        "xhdpi": "static/logo.png",
+        "xxhdpi": "static/logo.png",
+        "xxxhdpi": "static/logo.png"
       },
       "splashScreens": {
         "default": {}
